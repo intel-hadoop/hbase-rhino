@@ -214,7 +214,7 @@ public class TestCacheOnWrite {
 
   private void readStoreFile() throws IOException {
     HFileReaderV2 reader = (HFileReaderV2) HFile.createReaderWithEncoding(fs,
-        storeFilePath, cacheConf, encoder.getEncodingInCache());
+        storeFilePath, cacheConf, encoder.getEncodingInCache(), null);
     LOG.info("HFile information: " + reader);
     final boolean cacheBlocks = false;
     final boolean pread = false;

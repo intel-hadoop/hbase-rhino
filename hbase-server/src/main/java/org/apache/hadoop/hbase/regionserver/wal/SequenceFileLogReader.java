@@ -31,7 +31,19 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.io.SequenceFile;
+
+// XXX: TODO
+// SequenceFiles with crypto codecs need to be initialized in the reader
+// constructor, so this introduces a compatability problem. One solution is to
+// have WALReader delegate to a SequenceFile.Reader instead, and use 
+// factory/builder in hadoop-compat to get an instance of SequenceFile.Reader.
+// This makes sense in general as Hadoop 2 introduces a SF.Reader constructor
+// that takes arbitrary options and these constructors are deprecated.
+import org.apache.hadoop.io.crypto.CryptoContext;
 
 @InterfaceAudience.Private
 public class SequenceFileLogReader implements HLog.Reader {
@@ -54,6 +66,11 @@ public class SequenceFileLogReader implements HLog.Reader {
     WALReader(final FileSystem fs, final Path p, final Configuration c)
     throws IOException {
       super(fs, p, c);
+    }
+
+    WALReader(final FileSystem fs, final Path p, final Configuration c,
+      final CryptoContext cryptoContext) throws IOException {
+      super(fs, p, c, cryptoContext);
     }
 
     @Override
@@ -175,8 +192,29 @@ public class SequenceFileLogReader implements HLog.Reader {
       throws IOException {
     this.conf = conf;
     this.path = path;
-    reader = new WALReader(fs, path, conf);
     this.fs = fs;
+
+    // Set up for possibly encrypted WALs if the feature is enabled
+    boolean encrypt = conf.getBoolean(HConstants.ENABLE_WAL_ENCRYPTION, false);
+    if (encrypt) {
+      Encryption.Context context = Encryption.newContext(conf);
+      try {
+        context.setAlgorithm(Encryption.Algorithm.AES);
+        // We want only 10 round AES 128 for the WAL, so create a 128 bit key
+        // from the subject's secret key
+        context.setKey(Encryption.Algorithm.AES,
+          Encryption.hash128(
+            Encryption.getSecretKeyForSubject(
+              conf.get(HConstants.CRYPTO_MASTERKEY_NAME_CONF_KEY,
+                User.getCurrent().getShortName()),
+              conf)));
+      } catch (Exception e) {
+        throw new IOException(e);
+      }
+      reader = new WALReader(fs, path, conf, (CryptoContext)context.getDelegate());
+    } else {
+      reader = new WALReader(fs, path, conf);
+    }
 
     // If compression is enabled, new dictionaries are created here.
     boolean compression = reader.isWALCompressionEnabled();

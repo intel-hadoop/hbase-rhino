@@ -34,7 +34,8 @@ import org.apache.hadoop.hbase.codec.prefixtree.decode.PrefixTreeArraySearcher;
 import org.apache.hadoop.hbase.codec.prefixtree.encode.EncoderFactory;
 import org.apache.hadoop.hbase.codec.prefixtree.encode.PrefixTreeEncoder;
 import org.apache.hadoop.hbase.codec.prefixtree.scanner.CellSearcher;
-import org.apache.hadoop.hbase.io.compress.Compression.Algorithm;
+import org.apache.hadoop.hbase.io.compress.Compression;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoder;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
 import org.apache.hadoop.hbase.io.encoding.HFileBlockDecodingContext;
@@ -170,19 +171,22 @@ public class PrefixTreeCodec implements DataBlockEncoder{
   }
 
   @Override
-  public HFileBlockEncodingContext newDataBlockEncodingContext(Algorithm compressionAlgorithm,
+  public HFileBlockEncodingContext newDataBlockEncodingContext(
+      Compression.Algorithm compressionAlgorithm, Encryption.Context cryptoContext,
       DataBlockEncoding encoding, byte[] header) {
     if(DataBlockEncoding.PREFIX_TREE != encoding){
       //i'm not sure why encoding is in the interface.  Each encoder implementation should probably
       //know it's encoding type
       throw new IllegalArgumentException("only DataBlockEncoding.PREFIX_TREE supported");
     }
-    return new HFileBlockDefaultEncodingContext(compressionAlgorithm, encoding, header);
+    return new HFileBlockDefaultEncodingContext(compressionAlgorithm, cryptoContext,
+      encoding, header);
   }
 
   @Override
-  public HFileBlockDecodingContext newDataBlockDecodingContext(Algorithm compressionAlgorithm) {
-    return new HFileBlockDefaultDecodingContext(compressionAlgorithm);
+  public HFileBlockDecodingContext newDataBlockDecodingContext(
+      Compression.Algorithm compressionAlgorithm, Encryption.Context cryptoContext) {
+    return new HFileBlockDefaultDecodingContext(compressionAlgorithm, cryptoContext);
   }
 
   /**

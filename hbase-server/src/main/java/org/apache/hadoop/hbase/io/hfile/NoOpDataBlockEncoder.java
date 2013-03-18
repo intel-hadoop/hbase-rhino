@@ -20,7 +20,8 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 
 import org.apache.hadoop.classification.InterfaceAudience;
-import org.apache.hadoop.hbase.io.compress.Compression.Algorithm;
+import org.apache.hadoop.hbase.io.compress.Compression;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
 import org.apache.hadoop.hbase.io.encoding.HFileBlockDefaultDecodingContext;
 import org.apache.hadoop.hbase.io.encoding.HFileBlockDefaultEncodingContext;
@@ -95,15 +96,15 @@ public class NoOpDataBlockEncoder implements HFileDataBlockEncoder {
 
   @Override
   public HFileBlockEncodingContext newOnDiskDataBlockEncodingContext(
-      Algorithm compressionAlgorithm, byte[] dummyHeader) {
-    return new HFileBlockDefaultEncodingContext(compressionAlgorithm,
-        null, dummyHeader);
+      Compression.Algorithm compressionAlgorithm, Encryption.Context cryptoContext,
+      byte[] dummyHeader) {
+    return new HFileBlockDefaultEncodingContext(compressionAlgorithm, cryptoContext,
+      null, dummyHeader);
   }
 
   @Override
   public HFileBlockDecodingContext newOnDiskDataBlockDecodingContext(
-      Algorithm compressionAlgorithm) {
-    return new HFileBlockDefaultDecodingContext(compressionAlgorithm);
+      Compression.Algorithm compressionAlgorithm, Encryption.Context cryptoContext) {
+    return new HFileBlockDefaultDecodingContext(compressionAlgorithm, cryptoContext);
   }
-
 }

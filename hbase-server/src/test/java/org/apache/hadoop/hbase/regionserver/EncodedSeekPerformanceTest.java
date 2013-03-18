@@ -62,7 +62,7 @@ public class EncodedSeekPerformanceTest {
     // read all of the key values
     StoreFile storeFile = new StoreFile(testingUtility.getTestFileSystem(),
         path, configuration, cacheConf, BloomType.NONE,
-        NoOpDataBlockEncoder.INSTANCE);
+        NoOpDataBlockEncoder.INSTANCE, null);
 
     StoreFile.Reader reader = storeFile.createReader();
     StoreFileScanner scanner = reader.getStoreFileScanner(true, false);
@@ -92,7 +92,7 @@ public class EncodedSeekPerformanceTest {
       List<KeyValue> seeks) throws IOException {
     // read all of the key values
     StoreFile storeFile = new StoreFile(testingUtility.getTestFileSystem(),
-        path, configuration, cacheConf, BloomType.NONE, blockEncoder);
+        path, configuration, cacheConf, BloomType.NONE, blockEncoder, null);
 
     long totalSize = 0;
 

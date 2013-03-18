@@ -17,13 +17,13 @@
 package org.apache.hadoop.hbase.io.encoding;
 
 import java.io.ByteArrayInputStream;
-import java.io.DataInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.ByteBuffer;
 
 import org.apache.hadoop.hbase.io.compress.Compression;
-import org.apache.hadoop.hbase.io.compress.Compression.Algorithm;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
+import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.io.IOUtils;
 
 /**
  * A default implementation of {@link HFileBlockDecodingContext}. It assumes the
@@ -36,26 +36,55 @@ public class HFileBlockDefaultDecodingContext implements
     HFileBlockDecodingContext {
 
   private final Compression.Algorithm compressAlgo;
+  private final Encryption.Context cryptoContext;
 
-  public HFileBlockDefaultDecodingContext(
-      Compression.Algorithm compressAlgo) {
+  public HFileBlockDefaultDecodingContext(Compression.Algorithm compressAlgo,
+      Encryption.Context cryptoContext) {
     this.compressAlgo = compressAlgo;
+    this.cryptoContext = cryptoContext;
   }
 
   @Override
   public void prepareDecoding(int onDiskSizeWithoutHeader, int uncompressedSizeWithoutHeader,
       ByteBuffer blockBufferWithoutHeader, byte[] onDiskBlock, int offset) throws IOException {
-    DataInputStream dis = new DataInputStream(new ByteArrayInputStream(onDiskBlock, offset,
-        onDiskSizeWithoutHeader));
+    ByteArrayInputStream in = new ByteArrayInputStream(onDiskBlock, offset, onDiskSizeWithoutHeader);
+    if (cryptoContext != null) {
 
-    Compression.decompress(blockBufferWithoutHeader.array(),
-      blockBufferWithoutHeader.arrayOffset(), (InputStream) dis, onDiskSizeWithoutHeader,
-      uncompressedSizeWithoutHeader, compressAlgo);
+      // TODO: Consider using buffers instead of byte streams to avoid some
+      // possibly unnecessary allocations
+
+      // +--------------------------+
+      // | 4 bytes plaintext length |
+      // +--------------------------+
+      // | encrypted block data ... |
+      // +--------------------------+
+
+      byte[] plaintextLengthBytes = new byte[Bytes.SIZEOF_INT];
+      in.read(plaintextLengthBytes);
+      onDiskSizeWithoutHeader -= Bytes.SIZEOF_INT;
+      int plainTextLength = Bytes.toInt(plaintextLengthBytes);
+      byte[] plaintextBytes = new byte[onDiskSizeWithoutHeader];
+      Encryption.decrypt(plaintextBytes, 0, in, plainTextLength, cryptoContext);
+      in = new ByteArrayInputStream(plaintextBytes, 0, plainTextLength);
+      onDiskSizeWithoutHeader = plainTextLength;
+    }
+    if (compressAlgo != Compression.Algorithm.NONE) {
+      Compression.decompress(blockBufferWithoutHeader.array(),
+        blockBufferWithoutHeader.arrayOffset(), in, onDiskSizeWithoutHeader,
+        uncompressedSizeWithoutHeader, compressAlgo);
+    } else {
+      IOUtils.readFully(in, blockBufferWithoutHeader.array(),
+        blockBufferWithoutHeader.arrayOffset(), onDiskSizeWithoutHeader);
+    }
   }
 
   @Override
-  public Algorithm getCompression() {
+  public Compression.Algorithm getCompression() {
     return compressAlgo;
   }
 
+  @Override
+  public Encryption.Context getCryptoContext() {
+    return cryptoContext;
+  }
 }

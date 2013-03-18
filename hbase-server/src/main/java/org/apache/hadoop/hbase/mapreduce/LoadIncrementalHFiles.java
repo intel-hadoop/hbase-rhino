@@ -608,8 +608,9 @@ public class LoadIncrementalHFiles extends Configured implements Tool {
         familyDescriptor.getDataBlockEncodingOnDisk(),
         familyDescriptor.getDataBlockEncoding());
     try {
+      // TODO: support encrypted files
       halfReader = new HalfStoreFileReader(fs, inFile, cacheConf,
-          reference, DataBlockEncoding.NONE);
+          reference, DataBlockEncoding.NONE, null);
       Map<byte[], byte[]> fileInfo = halfReader.loadFileInfo();
 
       int blocksize = familyDescriptor.getBlocksize();

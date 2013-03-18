@@ -168,7 +168,7 @@ public class TestHFileBlockIndex {
 
     FSDataInputStream istream = fs.open(path);
     HFileBlock.FSReader blockReader = new HFileBlock.FSReaderV2(istream,
-        compr, fs.getFileStatus(path).getLen());
+        compr, null, fs.getFileStatus(path).getLen());
 
     BlockReaderWrapper brw = new BlockReaderWrapper(blockReader);
     HFileBlockIndex.BlockIndexReader indexReader =
@@ -215,7 +215,7 @@ public class TestHFileBlockIndex {
 
   private void writeWholeIndex() throws IOException {
     assertEquals(0, keys.size());
-    HFileBlock.Writer hbw = new HFileBlock.Writer(compr, null,
+    HFileBlock.Writer hbw = new HFileBlock.Writer(compr, null, null,
         includesMemstoreTS, HFile.DEFAULT_CHECKSUM_TYPE,
         HFile.DEFAULT_BYTES_PER_CHECKSUM);
     FSDataOutputStream outputStream = fs.create(path);

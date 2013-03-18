@@ -19,6 +19,7 @@
 
 package org.apache.hadoop.hbase.io.hfile;
 
+import java.io.ByteArrayInputStream;
 import java.io.DataOutput;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -32,11 +33,14 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.KeyValue.KeyComparator;
 import org.apache.hadoop.hbase.io.compress.Compression;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.hfile.HFile.Writer;
 import org.apache.hadoop.hbase.io.hfile.HFileBlock.BlockWritable;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.ChecksumType;
 import org.apache.hadoop.hbase.util.BloomFilterWriter;
 import org.apache.hadoop.hbase.util.Bytes;
@@ -88,6 +92,12 @@ public class HFileWriterV2 extends AbstractHFileWriter {
   private final boolean includeMemstoreTS = true;
   private long maxMemstoreTS = 0;
 
+  /** The encryption context. null if no encryption. */
+  protected final Encryption.Context cryptoContext;
+
+  /** The offset of the block containing the crypto key. */
+  protected long encryptionKeyBlockOffset;
+
   static class WriterFactoryV2 extends HFile.WriterFactory {
     WriterFactoryV2(Configuration conf, CacheConfig cacheConf) {
       super(conf, cacheConf);
@@ -96,25 +106,29 @@ public class HFileWriterV2 extends AbstractHFileWriter {
     @Override
     public Writer createWriter(FileSystem fs, Path path,
         FSDataOutputStream ostream, int blockSize,
-        Compression.Algorithm compress, HFileDataBlockEncoder blockEncoder,
+        Compression.Algorithm compressAlgo, Encryption.Context cryptoContext,
+        HFileDataBlockEncoder blockEncoder,
         final KeyComparator comparator, final ChecksumType checksumType,
         final int bytesPerChecksum) throws IOException {
       return new HFileWriterV2(conf, cacheConf, fs, path, ostream, blockSize,
-          compress, blockEncoder, comparator, checksumType, bytesPerChecksum);
+          compressAlgo, cryptoContext, blockEncoder, comparator, checksumType,
+          bytesPerChecksum);
     }
   }
 
   /** Constructor that takes a path, creates and closes the output stream. */
   public HFileWriterV2(Configuration conf, CacheConfig cacheConf,
       FileSystem fs, Path path, FSDataOutputStream ostream, int blockSize,
-      Compression.Algorithm compressAlgo, HFileDataBlockEncoder blockEncoder,
+      Compression.Algorithm compressAlgo, Encryption.Context cryptoContext,
+      HFileDataBlockEncoder blockEncoder,
       final KeyComparator comparator, final ChecksumType checksumType,
       final int bytesPerChecksum) throws IOException {
     super(cacheConf,
-        ostream == null ? createOutputStream(conf, fs, path) : ostream,
-        path, blockSize, compressAlgo, blockEncoder, comparator);
+      ostream == null ? createOutputStream(conf, fs, path) : ostream,
+      path, blockSize, compressAlgo, blockEncoder, comparator);
     this.checksumType = checksumType;
     this.bytesPerChecksum = bytesPerChecksum;
+    this.cryptoContext = cryptoContext;
     finishInit(conf);
   }
 
@@ -124,8 +138,8 @@ public class HFileWriterV2 extends AbstractHFileWriter {
       throw new IllegalStateException("finishInit called twice");
 
     // HFile filesystem-level (non-caching) block writer
-    fsBlockWriter = new HFileBlock.Writer(compressAlgo, blockEncoder,
-        includeMemstoreTS, checksumType, bytesPerChecksum);
+    fsBlockWriter = new HFileBlock.Writer(compressAlgo, cryptoContext, blockEncoder,
+      includeMemstoreTS, checksumType, bytesPerChecksum);
 
     // Data block index writer
     boolean cacheIndexesOnWrite = cacheConf.shouldCacheIndexesOnWrite();
@@ -138,7 +152,14 @@ public class HFileWriterV2 extends AbstractHFileWriter {
 
     // Meta data block index writer
     metaBlockIndexWriter = new HFileBlockIndex.BlockIndexWriter();
-    LOG.debug("Initialized with " + cacheConf);
+
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("Writer initialized with " + cacheConf
+        + " compression: " + compressAlgo.getName()
+        + " " + ( cryptoContext != null ? cryptoContext : "encryption: NONE" )
+        + " encoding: [disk=" + blockEncoder.getEncodingOnDisk().name() + "]"
+          + " [cache=" + blockEncoder.getEncodingInCache().name() + "]");
+    }
   }
 
   /**
@@ -408,6 +429,36 @@ public class HFileWriterV2 extends AbstractHFileWriter {
       totalUncompressedBytes += fsBlockWriter.getUncompressedSizeWithHeader();
     }
 
+    // If we have a valid crypto context, write out encryption metadata.
+    if (cryptoContext != null) {
+      encryptionKeyBlockOffset = outputStream.getPos();
+      trailer.setEncryptionKeyBlockOffset(encryptionKeyBlockOffset);
+      // Get a new writer for this block, with a null crypto context, it must
+      // produce plaintext or we won't be able to initialize the reader.
+      HFileBlock.Writer keyBlockWriter = new HFileBlock.Writer(compressAlgo, null, blockEncoder,
+        includeMemstoreTS, checksumType, bytesPerChecksum);
+      DataOutputStream os = keyBlockWriter.startWriting(BlockType.ENCRYPTION_INFO_META);
+      // Key block data format:
+      // +--------------------------+
+      // | 1 byte ordinal           |
+      // +--------------------------+
+      // | 4 bytes plaintext length |
+      // +--------------------------+
+      // | encrypted data ...       |
+      // +--------------------------+
+      byte[] keyBytes = cryptoContext.getKeyBytes();
+      os.write(cryptoContext.getAlgorithm().ordinal());
+      os.write(Bytes.toBytes(keyBytes.length));
+      Configuration conf = cryptoContext.getConf();
+      // Encrypt the file key with the master key
+      Encryption.encryptWithSubjectKey(os, new ByteArrayInputStream(keyBytes),
+        conf.get(HConstants.CRYPTO_MASTERKEY_NAME_CONF_KEY, User.getCurrent().getShortName()),
+        conf, cryptoContext.getAlgorithm());
+      os.flush();
+      keyBlockWriter.writeHeaderAndData(outputStream);
+      totalUncompressedBytes += keyBlockWriter.getUncompressedSizeWithHeader();
+    }
+
     // Now finish off the trailer.
     trailer.setNumDataIndexLevels(dataBlockIndexWriter.getNumLevels());
     trailer.setUncompressedDataIndexSize(
@@ -416,7 +467,6 @@ public class HFileWriterV2 extends AbstractHFileWriter {
     trailer.setLastDataBlockOffset(lastDataBlockOffset);
     trailer.setComparatorClass(comparator.getClass());
     trailer.setDataIndexCount(dataBlockIndexWriter.getNumRootEntries());
-
 
     finishClose(trailer);
 

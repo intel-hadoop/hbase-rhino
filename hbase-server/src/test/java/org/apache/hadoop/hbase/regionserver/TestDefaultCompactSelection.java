@@ -135,7 +135,7 @@ public class TestDefaultCompactSelection extends TestCase {
     MockStoreFile(long length, long ageInDisk, boolean isRef, long sequenceid) throws IOException {
       super(TEST_UTIL.getTestFileSystem(), TEST_FILE, TEST_UTIL.getConfiguration(),
             new CacheConfig(TEST_UTIL.getConfiguration()), BloomType.NONE,
-            NoOpDataBlockEncoder.INSTANCE);
+            NoOpDataBlockEncoder.INSTANCE, null);
       this.length = length;
       this.isRef = isRef;
       this.ageInDisk = ageInDisk;

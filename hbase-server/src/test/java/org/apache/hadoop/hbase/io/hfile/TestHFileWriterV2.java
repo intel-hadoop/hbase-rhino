@@ -41,7 +41,7 @@ import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.SmallTests;
 import org.apache.hadoop.hbase.io.compress.Compression;
-import org.apache.hadoop.hbase.io.compress.Compression.Algorithm;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.hfile.HFile.FileInfo;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Writables;
@@ -76,22 +76,21 @@ public class TestHFileWriterV2 {
   @Test
   public void testHFileFormatV2() throws IOException {
     Path hfilePath = new Path(TEST_UTIL.getDataTestDir(), "testHFileFormatV2");
-    final Compression.Algorithm compressAlgo = Compression.Algorithm.GZ;
     final int entryCount = 10000;
-    writeDataAndReadFromHFile(hfilePath, compressAlgo, entryCount, false);
+    writeDataAndReadFromHFile(hfilePath, Compression.Algorithm.GZ, null, entryCount, false);
   }
 
   @Test
   public void testMidKeyInHFile() throws IOException{
     Path hfilePath = new Path(TEST_UTIL.getDataTestDir(),
     "testMidKeyInHFile");
-    Compression.Algorithm compressAlgo = Compression.Algorithm.NONE;
     int entryCount = 50000;
-    writeDataAndReadFromHFile(hfilePath, compressAlgo, entryCount, true);
+    writeDataAndReadFromHFile(hfilePath, Compression.Algorithm.NONE, null, entryCount, true);
   }
 
   private void writeDataAndReadFromHFile(Path hfilePath,
-      Algorithm compressAlgo, int entryCount, boolean findMidKey) throws IOException {
+      Compression.Algorithm compressAlgo, Encryption.Context cryptoContext,
+      int entryCount, boolean findMidKey) throws IOException {
 
     HFileWriterV2 writer = (HFileWriterV2)
         new HFileWriterV2.WriterFactoryV2(conf, new CacheConfig(conf))
@@ -138,8 +137,8 @@ public class TestHFileWriterV2 {
     assertEquals(2, trailer.getMajorVersion());
     assertEquals(entryCount, trailer.getEntryCount());
 
-    HFileBlock.FSReader blockReader =
-        new HFileBlock.FSReaderV2(fsdis, compressAlgo, fileSize);
+    HFileBlock.FSReader blockReader = new HFileBlock.FSReaderV2(fsdis, compressAlgo,
+      cryptoContext, fileSize);
     // Comparator class name is stored in the trailer in version 2.
     RawComparator<byte []> comparator = trailer.createComparator();
     HFileBlockIndex.BlockIndexReader dataBlockIndexReader =

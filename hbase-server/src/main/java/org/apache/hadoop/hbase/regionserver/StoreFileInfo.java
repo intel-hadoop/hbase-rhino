@@ -36,6 +36,7 @@ import org.apache.hadoop.hbase.fs.HFileSystem;
 import org.apache.hadoop.hbase.io.HFileLink;
 import org.apache.hadoop.hbase.io.Reference;
 import org.apache.hadoop.hbase.io.HalfStoreFileReader;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
 import org.apache.hadoop.hbase.io.hfile.CacheConfig;
 import org.apache.hadoop.hbase.util.FSUtils;
@@ -156,7 +157,8 @@ public class StoreFileInfo {
    * @return The StoreFile.Reader for the file
    */
   public StoreFile.Reader open(final FileSystem fs, final CacheConfig cacheConf,
-      final DataBlockEncoding dataBlockEncoding) throws IOException {
+      final DataBlockEncoding dataBlockEncoding, final Encryption.Context cryptoContext)
+      throws IOException {
     FSDataInputStream inNoChecksum = null;
     FileSystem noChecksumFs = null;
     FSDataInputStream in;
@@ -182,7 +184,7 @@ public class StoreFileInfo {
 
       hdfsBlocksDistribution = computeRefFileHDFSBlockDistribution(fs, reference, status);
       return new HalfStoreFileReader(fs, this.getPath(), in, inNoChecksum, status.getLen(),
-          cacheConf, reference, dataBlockEncoding);
+          cacheConf, reference, dataBlockEncoding, cryptoContext);
     } else {
       if (this.link != null) {
         // HFileLink
@@ -199,7 +201,7 @@ public class StoreFileInfo {
       long length = status.getLen();
       hdfsBlocksDistribution = FSUtils.computeHDFSBlocksDistribution(fs, status, 0, length);
       return new StoreFile.Reader(fs, this.getPath(), in, inNoChecksum, length,
-          cacheConf, dataBlockEncoding, true);
+          cacheConf, dataBlockEncoding, true, cryptoContext);
     }
   }
 

@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 
 import org.apache.hadoop.hbase.io.compress.Compression;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 
 /**
  * A decoding context that is created by a reader's encoder, and is shared
@@ -33,6 +34,9 @@ public interface HFileBlockDecodingContext {
    * @return the compression algorithm used by this decoding context
    */
   public Compression.Algorithm getCompression();
+
+  /** @return the crypto context */
+  public Encryption.Context getCryptoContext();
 
   /**
    * Perform all actions that need to be done before the encoder's real decoding process.

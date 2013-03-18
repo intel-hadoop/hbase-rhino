@@ -28,6 +28,7 @@ import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
 import org.apache.hadoop.hbase.io.hfile.CacheConfig;
 import org.apache.hadoop.hbase.io.hfile.HFileScanner;
@@ -70,8 +71,9 @@ public class HalfStoreFileReader extends StoreFile.Reader {
    */
   public HalfStoreFileReader(final FileSystem fs, final Path p,
       final CacheConfig cacheConf, final Reference r,
-      DataBlockEncoding preferredEncodingInCache) throws IOException {
-    super(fs, p, cacheConf, preferredEncodingInCache);
+      DataBlockEncoding preferredEncodingInCache,
+      Encryption.Context cryptoContext) throws IOException {
+    super(fs, p, cacheConf, preferredEncodingInCache, cryptoContext);
     // This is not actual midkey for this half-file; its just border
     // around which we split top and bottom.  Have to look in files to find
     // actual last and first keys for bottom and top halves.  Half-files don't
@@ -92,12 +94,14 @@ public class HalfStoreFileReader extends StoreFile.Reader {
    * @param cacheConf
    * @param r original reference file (contains top or bottom)
    * @param preferredEncodingInCache
+   * @param cryptoContext
    * @throws IOException
    */
   public HalfStoreFileReader(final FileSystem fs, final Path p, final FSDataInputStream in,
       final FSDataInputStream inNoChecksum, long size, final CacheConfig cacheConf,
-      final Reference r, final DataBlockEncoding preferredEncodingInCache) throws IOException {
-    super(fs, p, in, inNoChecksum, size, cacheConf, preferredEncodingInCache, true);
+      final Reference r, final DataBlockEncoding preferredEncodingInCache, 
+      final Encryption.Context cryptoContext) throws IOException {
+    super(fs, p, in, inNoChecksum, size, cacheConf, preferredEncodingInCache, true, cryptoContext);
     // This is not actual midkey for this half-file; its just border
     // around which we split top and bottom.  Have to look in files to find
     // actual last and first keys for bottom and top halves.  Half-files don't

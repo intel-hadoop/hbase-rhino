@@ -45,6 +45,7 @@ import org.apache.hadoop.hbase.KeyValue.KVComparator;
 import org.apache.hadoop.hbase.KeyValue.MetaKeyComparator;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.io.compress.Compression;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
 import org.apache.hadoop.hbase.io.hfile.BlockType;
 import org.apache.hadoop.hbase.io.hfile.CacheConfig;
@@ -135,6 +136,9 @@ public class StoreFile {
   // Set when we obtain a Reader.
   private long maxMemstoreTS = -1;
 
+  // crypto context if using encryption
+  private Encryption.Context cryptoContext;
+
   public long getMaxMemstoreTS() {
     return maxMemstoreTS;
   }
@@ -192,8 +196,10 @@ public class StoreFile {
    */
   public StoreFile(final FileSystem fs, final Path p, final Configuration conf,
         final CacheConfig cacheConf, final BloomType cfBloomType,
-        final HFileDataBlockEncoder dataBlockEncoder) throws IOException {
-    this(fs, new StoreFileInfo(conf, fs, p), conf, cacheConf, cfBloomType, dataBlockEncoder);
+        final HFileDataBlockEncoder dataBlockEncoder,
+        final Encryption.Context cryptoContext) throws IOException {
+    this(fs, new StoreFileInfo(conf, fs, p), conf, cacheConf, cfBloomType, dataBlockEncoder,
+      cryptoContext);
   }
 
 
@@ -215,13 +221,15 @@ public class StoreFile {
    */
   public StoreFile(final FileSystem fs, final StoreFileInfo fileInfo, final Configuration conf,
       final CacheConfig cacheConf,  final BloomType cfBloomType,
-      final HFileDataBlockEncoder dataBlockEncoder) throws IOException {
+      final HFileDataBlockEncoder dataBlockEncoder, final Encryption.Context cryptoContext)
+      throws IOException {
     this.fs = fs;
     this.fileInfo = fileInfo;
     this.cacheConf = cacheConf;
     this.dataBlockEncoder =
         dataBlockEncoder == null ? NoOpDataBlockEncoder.INSTANCE
             : dataBlockEncoder;
+    this.cryptoContext = cryptoContext;
 
     if (BloomFilterFactory.isGeneralBloomEnabled(conf)) {
       this.cfBloomType = cfBloomType;
@@ -352,7 +360,8 @@ public class StoreFile {
     }
 
     // Open the StoreFile.Reader
-    this.reader = fileInfo.open(this.fs, this.cacheConf, dataBlockEncoder.getEncodingInCache());
+    this.reader = fileInfo.open(this.fs, this.cacheConf, dataBlockEncoder.getEncodingInCache(),
+      cryptoContext);
 
     // Load up indices and fileinfo. This also loads Bloom filter type.
     metadataMap = Collections.unmodifiableMap(this.reader.loadFileInfo());
@@ -518,10 +527,9 @@ public class StoreFile {
     private final FileSystem fs;
     private final int blockSize;
 
-    private Compression.Algorithm compressAlgo =
-        HFile.DEFAULT_COMPRESSION_ALGORITHM;
-    private HFileDataBlockEncoder dataBlockEncoder =
-        NoOpDataBlockEncoder.INSTANCE;
+    private Compression.Algorithm compressAlgo = HFile.DEFAULT_COMPRESSION_ALGORITHM;
+    private Encryption.Context cryptoContext;
+    private HFileDataBlockEncoder dataBlockEncoder = NoOpDataBlockEncoder.INSTANCE;
     private KeyValue.KVComparator comparator = KeyValue.COMPARATOR;
     private BloomType bloomType = BloomType.NONE;
     private long maxKeyCount = 0;
@@ -565,6 +573,11 @@ public class StoreFile {
     public WriterBuilder withCompression(Compression.Algorithm compressAlgo) {
       Preconditions.checkNotNull(compressAlgo);
       this.compressAlgo = compressAlgo;
+      return this;
+    }
+
+    public WriterBuilder withEncryptionContext(Encryption.Context cryptoContext) {
+      this.cryptoContext = cryptoContext;
       return this;
     }
 
@@ -642,12 +655,14 @@ public class StoreFile {
       if (compressAlgo == null) {
         compressAlgo = HFile.DEFAULT_COMPRESSION_ALGORITHM;
       }
+
       if (comparator == null) {
         comparator = KeyValue.COMPARATOR;
       }
-      return new Writer(fs, filePath, blockSize, compressAlgo, dataBlockEncoder,
-          conf, cacheConf, comparator, bloomType, maxKeyCount, checksumType,
-          bytesPerChecksum);
+
+      return new Writer(fs, filePath, blockSize, compressAlgo, cryptoContext,
+        dataBlockEncoder, conf, cacheConf, comparator, bloomType,
+        maxKeyCount, checksumType, bytesPerChecksum);
     }
   }
 
@@ -754,7 +769,7 @@ public class StoreFile {
      * @throws IOException problem writing to FS
      */
     private Writer(FileSystem fs, Path path, int blocksize,
-        Compression.Algorithm compress,
+        Compression.Algorithm compress, Encryption.Context cryptoContext,
         HFileDataBlockEncoder dataBlockEncoder, final Configuration conf,
         CacheConfig cacheConf,
         final KVComparator comparator, BloomType bloomType, long maxKeys,
@@ -770,6 +785,7 @@ public class StoreFile {
           .withComparator(comparator.getRawComparator())
           .withChecksumType(checksumType)
           .withBytesPerChecksum(bytesPerChecksum)
+          .withEncryptionContext(cryptoContext)
           .create();
 
       this.kvComparator = comparator;
@@ -1050,18 +1066,20 @@ public class StoreFile {
     private long deleteFamilyCnt = -1;
 
     public Reader(FileSystem fs, Path path, CacheConfig cacheConf,
-        DataBlockEncoding preferredEncodingInCache) throws IOException {
+        DataBlockEncoding preferredEncodingInCache,
+        Encryption.Context cryptoContext) throws IOException {
       reader = HFile.createReaderWithEncoding(fs, path, cacheConf,
-          preferredEncodingInCache);
+          preferredEncodingInCache, cryptoContext);
       bloomFilterType = BloomType.NONE;
     }
 
     public Reader(FileSystem fs, Path path, FSDataInputStream in,
         final FSDataInputStream inNoChecksum, long size,
         CacheConfig cacheConf, DataBlockEncoding preferredEncodingInCache,
-        boolean closeIStream) throws IOException {
+        boolean closeIStream, Encryption.Context cryptoContext) throws IOException {
       reader = HFile.createReaderWithEncoding(fs, path, in, inNoChecksum,
-                  size, cacheConf, preferredEncodingInCache, closeIStream);
+                  size, cacheConf, preferredEncodingInCache, closeIStream,
+                  cryptoContext);
       bloomFilterType = BloomType.NONE;
     }
 

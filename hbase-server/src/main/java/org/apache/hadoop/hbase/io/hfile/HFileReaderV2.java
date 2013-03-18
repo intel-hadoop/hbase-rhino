@@ -18,7 +18,9 @@
  */
 package org.apache.hadoop.hbase.io.hfile;
 
+import java.io.ByteArrayOutputStream;
 import java.io.DataInput;
+import java.io.DataInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -27,14 +29,17 @@ import java.util.List;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.fs.HFileSystem;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoder;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
 import org.apache.hadoop.hbase.io.hfile.HFile.FileInfo;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.IdLock;
 import org.apache.hadoop.io.WritableUtils;
@@ -73,6 +78,9 @@ public class HFileReaderV2 extends AbstractHFileReader {
    */
   private List<HFileBlock> loadOnOpenBlocks = new ArrayList<HFileBlock>();
 
+  /** Updated when we read in the trailer. May be null. */
+  protected Encryption.Context cryptoContext;
+
   /** Minimum minor version supported by this HFile format */
   static final int MIN_MINOR_VERSION = 0;
 
@@ -102,13 +110,47 @@ public class HFileReaderV2 extends AbstractHFileReader {
       final boolean closeIStream, final CacheConfig cacheConf,
       DataBlockEncoding preferredEncodingInCache, final HFileSystem hfs)
       throws IOException {
-    super(path, trailer, fsdis, fsdisNoFsChecksum, size, 
-          closeIStream, cacheConf, hfs);
+    super(path, trailer, fsdis, fsdisNoFsChecksum, size, closeIStream, cacheConf, hfs);
     trailer.expectMajorVersion(2);
     validateMinorVersion(path, trailer.getMinorVersion());
+
+    if (trailer.getEncryptionKeyBlockOffset() != 0) {
+      // Initialize the crypto context for the reader
+      // Key block data format:
+      // +--------------------------+
+      // | 1 byte ordinal           |
+      // +--------------------------+
+      // | 4 bytes plaintext length |
+      // +--------------------------+
+      // | encrypted data ...       |
+      // +--------------------------+
+      this.cryptoContext = Encryption.newContext();
+      // We need a reader with a null crypto context, the key block is
+      // plaintext.
+      HFileBlock.FSReaderV2 keyBlockReader = new HFileBlock.FSReaderV2(fsdis,
+        fsdisNoFsChecksum, compressAlgo, null, fileSize, trailer.getMinorVersion(), hfs,
+        path);
+      HFileBlock.BlockIterator blockIter = keyBlockReader.blockRange(
+        trailer.getEncryptionKeyBlockOffset(), fileSize - trailer.getTrailerSize());
+      HFileBlock keyBlock = blockIter.nextBlockWithBlockType(BlockType.ENCRYPTION_INFO_META);
+      // Initialize the crypto context for the reader from the key block
+      DataInputStream in = keyBlock.getByteStream();
+      Encryption.Algorithm algorithm = Encryption.Algorithm.values()[in.read()];
+      byte[] plaintextLengthBytes = new byte[Bytes.SIZEOF_INT];
+      in.read(plaintextLengthBytes);
+      int plaintextLength = Bytes.toInt(plaintextLengthBytes);
+      ByteArrayOutputStream out = new ByteArrayOutputStream();
+      Configuration conf = cryptoContext.getConf();
+      Encryption.decryptWithSubjectKey(out, in, plaintextLength,
+        conf.get(HConstants.CRYPTO_MASTERKEY_NAME_CONF_KEY, User.getCurrent().getShortName()),
+        conf, algorithm);
+      cryptoContext.setAlgorithm(algorithm);
+      cryptoContext.setKey(algorithm, out.toByteArray());
+    }
+
     HFileBlock.FSReaderV2 fsBlockReaderV2 = new HFileBlock.FSReaderV2(fsdis,
-        fsdisNoFsChecksum,
-        compressAlgo, fileSize, trailer.getMinorVersion(), hfs, path);
+      fsdisNoFsChecksum, compressAlgo, cryptoContext, fileSize,
+      trailer.getMinorVersion(), hfs, path);
     this.fsBlockReader = fsBlockReaderV2; // upcast
 
     // Comparator class name is stored in the trailer in version 2.
@@ -122,7 +164,8 @@ public class HFileReaderV2 extends AbstractHFileReader {
 
     HFileBlock.BlockIterator blockIter = fsBlockReaderV2.blockRange(
         trailer.getLoadOnOpenDataOffset(),
-        fileSize - trailer.getTrailerSize());
+        trailer.getEncryptionKeyBlockOffset() != 0 ?
+            trailer.getEncryptionKeyBlockOffset() :  fileSize - trailer.getTrailerSize());
 
     // Data index. We also read statistics about the block index written after
     // the root level.
@@ -157,6 +200,14 @@ public class HFileReaderV2 extends AbstractHFileReader {
     HFileBlock b;
     while ((b = blockIter.nextBlock()) != null) {
       loadOnOpenBlocks.add(b);
+    }
+
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("Reader for " + path + " initialized with " + cacheConf
+        + " compression: " + compressAlgo.getName()
+        + " " + ( cryptoContext != null ? cryptoContext : "encryption: none" )
+        + " encoding: [disk=" + dataBlockEncoder.getEncodingOnDisk().name() + "]"
+          + " [cache=" + dataBlockEncoder.getEncodingInCache().name() + "]");
     }
   }
 
@@ -1106,5 +1157,11 @@ public class HFileReaderV2 extends AbstractHFileReader {
       LOG.error(msg);
       throw new RuntimeException(msg);
     }
+  }
+
+  /** @return crypto context */
+  @Override
+  public Encryption.Context getCryptoContext() {
+    return cryptoContext;
   }
 }

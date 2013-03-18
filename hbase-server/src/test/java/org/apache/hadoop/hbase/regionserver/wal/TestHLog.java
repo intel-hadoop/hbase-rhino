@@ -25,6 +25,9 @@ import java.lang.reflect.Method;
 import java.util.TreeMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -734,6 +737,116 @@ public class TestHLog  {
       WALCoprocessorHost host = log.getCoprocessorHost();
       Coprocessor c = host.findCoprocessor(SampleRegionWALObserver.class.getName());
       assertNotNull(c);
+    } finally {
+      if (log != null) log.closeAndDelete();
+    }
+  }
+
+  @Test
+  public void testWALWithEncryptionCodec() throws Exception {
+    // Set up a configuration with the test key provider and the correct key
+
+    final Configuration ourGoodConf = new Configuration(conf);
+    ourGoodConf.setBoolean(HConstants.ENABLE_WAL_ENCRYPTION, true);
+    ourGoodConf.set(HConstants.CRYPTO_KEYPROVIDER_CONF_KEY,
+      "org.apache.hadoop.io.crypto.KeyProviderForTesting");
+    ourGoodConf.set(HConstants.CRYPTO_KEYPROVIDER_PARAMETERS_KEY, "123456");
+
+    // Set up a configuration with the test key provider and an incorrect key
+
+    final Configuration ourBadConf = new Configuration(ourGoodConf);
+    ourBadConf.set(HConstants.CRYPTO_KEYPROVIDER_PARAMETERS_KEY, "654321");
+
+    // Write the encrypted log
+
+    final byte[] tableName = Bytes.toBytes("testWALWithEncryptionCodec");
+    final byte[] row = Bytes.toBytes("row");
+    final byte[] family = Bytes.toBytes("family");
+    final int columns = 10;
+    final HRegionInfo hri = new HRegionInfo(tableName, HConstants.EMPTY_START_ROW,
+      HConstants.EMPTY_END_ROW);
+    HTableDescriptor htd = new HTableDescriptor(tableName);
+    htd.addFamily(new HColumnDescriptor("family"));
+    HLog log = HLogFactory.createHLog(fs, hbaseDir, getName(), ourGoodConf);
+    try {
+      long timestamp = System.currentTimeMillis();
+      WALEdit cols = new WALEdit();
+      for (int i = 0; i < columns; i++) {
+        cols.add(new KeyValue(row, family, Bytes.toBytes(Integer.toString(i)), timestamp,
+          new byte[] { (byte)(i + '0') }));
+      }
+      log.append(hri, tableName, cols, timestamp, htd);
+      log.startCacheFlush(hri.getEncodedNameAsBytes());
+      log.completeCacheFlush(hri.getEncodedNameAsBytes());
+      log.close();
+      final Path filename = ((FSHLog)log).computeFilename();
+      log = null;
+
+      // Open a reader on the log and check the write can be read back
+
+      HLog.Reader reader = HLogFactory.createReader(fs, filename, ourGoodConf);
+      try {
+        HLog.Entry entry = reader.next();
+        assertEquals(columns, entry.getEdit().size());
+        int idx = 0;
+        for (KeyValue val : entry.getEdit().getKeyValues()) {
+          assertTrue(Bytes.equals(hri.getEncodedNameAsBytes(),
+            entry.getKey().getEncodedRegionName()));
+          assertTrue(Bytes.equals(tableName, entry.getKey().getTablename()));
+          assertTrue(Bytes.equals(row, val.getRow()));
+          assertEquals((byte)(idx + '0'), val.getValue()[0]);
+          idx++;
+        }
+      } finally {
+        reader.close();
+      }
+
+      // Open a reader with an incorrect key and check the file cannot be read.
+      // Use a daemon thread. Because the reader should be seeing garbage it
+      // will behave unpredictably.
+      final CountDownLatch latch = new CountDownLatch(1);
+      final AtomicBoolean readDidNotFail = new AtomicBoolean(false);
+      final AtomicBoolean readerCouldNotBeOpened = new AtomicBoolean(false);
+      Thread runner = new Thread(new Runnable() {
+        @Override
+        public void run() {
+          try {
+            HLog.Reader reader = HLogFactory.createReader(fs, filename, ourBadConf);
+            try {
+              HLog.Entry entry = reader.next();
+              assertEquals(columns, entry.getEdit().size());
+              int idx = 0;
+              for (KeyValue val : entry.getEdit().getKeyValues()) {
+                assertTrue(Bytes.equals(hri.getEncodedNameAsBytes(),
+                  entry.getKey().getEncodedRegionName()));
+                assertTrue(Bytes.equals(tableName, entry.getKey().getTablename()));
+                assertTrue(Bytes.equals(row, val.getRow()));
+                assertEquals((byte)(idx + '0'), val.getValue()[0]);
+                idx++;
+              }
+              readDidNotFail.set(true);
+            } catch (Throwable t) {
+              // Expected read or assertion failure
+            } finally {
+              reader.close();
+            }
+          } catch (IOException e) {
+            // Could not set up reader, not expected
+            readerCouldNotBeOpened.set(true);
+          }
+          latch.countDown();
+        }
+      });
+      runner.setDaemon(true);
+      runner.start();
+      boolean timeout = !latch.await(5, TimeUnit.SECONDS);
+      runner.interrupt();
+      if (readerCouldNotBeOpened.get()) {
+        fail("Reader could not be opened but we should have been able to get one");
+      }
+      if (!timeout && readDidNotFail.get()) {
+        fail("Reader should have failed or timed out but did not");
+      }
     } finally {
       if (log != null) log.closeAndDelete();
     }

@@ -34,8 +34,9 @@ import org.apache.hadoop.classification.InterfaceStability;
 public class Methods {
   private static Log LOG = LogFactory.getLog(Methods.class);
 
-  public static <T> Object call(Class<T> clazz, T instance, String methodName,
-      Class[] types, Object[] args) throws Exception {
+  @SuppressWarnings({ "rawtypes", "unchecked" })
+  public static Object call(Class clazz, Object instance, String methodName,
+      Class<?>[] types, Object[] args) throws Exception {
     try {
       Method m = clazz.getMethod(methodName, types);
       return m.invoke(instance, args);

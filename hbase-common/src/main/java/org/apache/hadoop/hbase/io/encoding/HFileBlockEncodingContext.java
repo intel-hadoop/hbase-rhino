@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 
 import org.apache.hadoop.hbase.io.compress.Compression;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.hfile.BlockType;
 
 /**
@@ -57,6 +58,9 @@ public interface HFileBlockEncodingContext {
    * @return the compression algorithm used by this encoding context
    */
   public Compression.Algorithm getCompression();
+
+  /** @return the crypto context */
+  public Encryption.Context getCryptoContext();
 
   /**
    * @return the header size used

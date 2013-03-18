@@ -32,6 +32,8 @@ import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.io.SequenceFile;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.SequenceFile.CompressionType;
@@ -139,6 +141,30 @@ public class SequenceFileLogWriter implements HLog.Writer {
       }
     }
 
+    SequenceFile.CompressionType compressionType = SequenceFile.CompressionType.NONE;
+    CompressionCodec compressionCodec = new DefaultCodec();
+
+    // Set up encryption if it is enabled
+    boolean encrypt = conf.getBoolean(HConstants.ENABLE_WAL_ENCRYPTION, false);
+    if (encrypt) {
+      Encryption.Context context = Encryption.newContext(conf);
+      try {
+        context.setAlgorithm(Encryption.Algorithm.AES);
+        // We want only 10 round AES 128 for the WAL, so create a 128 bit key
+        // from the subject's secret key
+        context.setKey(Encryption.Algorithm.AES,
+          Encryption.hash128(
+            Encryption.getSecretKeyForSubject(
+              conf.get(HConstants.CRYPTO_MASTERKEY_NAME_CONF_KEY,
+                User.getCurrent().getShortName()),
+              conf)));
+      } catch (Exception e) {
+        throw new IOException(e);
+      }
+      compressionType = SequenceFile.CompressionType.RECORD;
+      compressionCodec = Encryption.getEncryptionCodec(context);
+    }
+
     if (null == keyClass) {
       keyClass = HLogUtil.getKeyClass(conf);
     }
@@ -161,7 +187,7 @@ public class SequenceFileLogWriter implements HLog.Writer {
             Long.valueOf(conf.getLong("hbase.regionserver.hlog.blocksize",
                 fs.getDefaultBlockSize())),
             Boolean.valueOf(false) /*createParent*/,
-            SequenceFile.CompressionType.NONE, new DefaultCodec(),
+            compressionType, compressionCodec,
             createMetadata(conf, compress)
             });
     } catch (InvocationTargetException ite) {
@@ -181,8 +207,7 @@ public class SequenceFileLogWriter implements HLog.Writer {
           fs.getDefaultReplication()),
         conf.getLong("hbase.regionserver.hlog.blocksize",
           fs.getDefaultBlockSize()),
-        SequenceFile.CompressionType.NONE,
-        new DefaultCodec(),
+        compressionType, compressionCodec,
         null,
         createMetadata(conf, compress));
     } else {

@@ -20,7 +20,8 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 
 import org.apache.hadoop.classification.InterfaceAudience;
-import org.apache.hadoop.hbase.io.compress.Compression.Algorithm;
+import org.apache.hadoop.hbase.io.compress.Compression;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
 import org.apache.hadoop.hbase.io.encoding.HFileBlockEncodingContext;
 import org.apache.hadoop.hbase.io.encoding.HFileBlockDecodingContext;
@@ -98,21 +99,23 @@ public interface HFileDataBlockEncoder {
    * valid.
    *
    * @param compressionAlgorithm compression algorithm
+   * @param cryptoContext encryption context
    * @param headerBytes header bytes
    * @return a new {@link HFileBlockEncodingContext} object
    */
   public HFileBlockEncodingContext newOnDiskDataBlockEncodingContext(
-      Algorithm compressionAlgorithm, byte[] headerBytes);
+      Compression.Algorithm compressionAlgorithm, Encryption.Context cryptoContext,
+      byte[] headerBytes);
 
   /**
    * create a encoder specific decoding context for reading. And the
    * decoding context should also do decompression if compressionAlgorithm
    * is valid.
    *
-   * @param compressionAlgorithm
+   * @param compressionAlgorithm compression algorithm
+   * @param cryptoContext decryption context
    * @return a new {@link HFileBlockDecodingContext} object
    */
   public HFileBlockDecodingContext newOnDiskDataBlockDecodingContext(
-      Algorithm compressionAlgorithm);
-
+      Compression.Algorithm compressionAlgorithm, Encryption.Context cryptoContext);
 }

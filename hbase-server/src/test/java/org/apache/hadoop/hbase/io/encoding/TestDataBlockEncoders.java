@@ -34,6 +34,8 @@ import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.KeyValue.Type;
 import org.apache.hadoop.hbase.LargeTests;
 import org.apache.hadoop.hbase.io.compress.Compression;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
+import org.apache.hadoop.hbase.io.hfile.HFileBlock;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.test.RedundantKVGenerator;
 import org.junit.Test;
@@ -69,22 +71,23 @@ public class TestDataBlockEncoders {
     this.includesMemstoreTS = includesMemstoreTS;
   }
 
-  private HFileBlockEncodingContext getEncodingContext(
-      Compression.Algorithm algo, DataBlockEncoding encoding) {
+  private HFileBlockEncodingContext getEncodingContext(Compression.Algorithm compressAlgo,
+      Encryption.Context cryptoContext, DataBlockEncoding encoding) {
     DataBlockEncoder encoder = encoding.getEncoder();
     if (encoder != null) {
-      return encoder.newDataBlockEncodingContext(algo, encoding,
-          HConstants.HFILEBLOCK_DUMMY_HEADER);
+      return encoder.newDataBlockEncodingContext(compressAlgo, cryptoContext, encoding,
+        HConstants.HFILEBLOCK_DUMMY_HEADER);
     } else {
-      return new HFileBlockDefaultEncodingContext(algo, encoding, HConstants.HFILEBLOCK_DUMMY_HEADER);
+      return new HFileBlockDefaultEncodingContext(compressAlgo, cryptoContext, encoding,
+        HConstants.HFILEBLOCK_DUMMY_HEADER);
     }
   }
 
   private byte[] encodeBytes(DataBlockEncoding encoding,
       ByteBuffer dataset) throws IOException {
     DataBlockEncoder encoder = encoding.getEncoder();
-    HFileBlockEncodingContext encodingCtx =
-        getEncodingContext(Compression.Algorithm.NONE, encoding);
+    HFileBlockEncodingContext encodingCtx = getEncodingContext(Compression.Algorithm.NONE,
+      null, encoding);
 
     encoder.encodeKeyValues(dataset, includesMemstoreTS,
         encodingCtx);

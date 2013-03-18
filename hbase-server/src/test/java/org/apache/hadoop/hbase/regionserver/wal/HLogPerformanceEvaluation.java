@@ -26,6 +26,7 @@ import java.util.Random;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
@@ -123,6 +124,8 @@ public final class HLogPerformanceEvaluation extends Configured implements Tool 
     int numFamilies = 1;
     boolean noSync = false;
     boolean verify = false;
+    boolean compress = false;
+    boolean encrypt = false;
     boolean verbose = false;
     long roll = Long.MAX_VALUE;
     // Process command line args
@@ -147,6 +150,10 @@ public final class HLogPerformanceEvaluation extends Configured implements Tool 
           noSync = true;
         } else if (cmd.equals("-verify")) {
           verify = true;
+        } else if (cmd.equals("-compress")) {
+          compress = true;
+        } else if (cmd.equals("-encrypt")) {
+          encrypt = true;
         } else if (cmd.equals("-verbose")) {
           verbose = true;
         } else if (cmd.equals("-roll")) {
@@ -162,6 +169,18 @@ public final class HLogPerformanceEvaluation extends Configured implements Tool 
       } catch (Exception e) {
         printUsageAndExit();
       }
+    }
+
+    if (compress) {
+      getConf().setBoolean(HConstants.ENABLE_WAL_COMPRESSION, true);
+    }
+
+    if (encrypt) {
+      Configuration conf = getConf();
+      conf.setBoolean(HConstants.ENABLE_WAL_ENCRYPTION, true);
+      conf.set(HConstants.CRYPTO_KEYPROVIDER_CONF_KEY,
+        "org.apache.hadoop.io.crypto.KeyProviderForTesting");
+      conf.set(HConstants.CRYPTO_KEYPROVIDER_PARAMETERS_KEY, "123456");
     }
 
     // Run HLog Performance Evaluation
@@ -281,6 +300,8 @@ public final class HLogPerformanceEvaluation extends Configured implements Tool 
     System.err.println("  -keySize <N>     Row key size in byte.");
     System.err.println("  -valueSize <N>   Row/Col value size in byte.");
     System.err.println("  -nosync          Append without syncing");
+    System.err.println("  -compress        Enable WAL compression");
+    System.err.println("  -encrypt         Enable WAL encryption");
     System.err.println("  -verify          Verify edits written in sequence");
     System.err.println("  -verbose         Output extra info; e.g. all edit seq ids when verifying");
     System.err.println("  -roll <N>        Roll the way every N appends");

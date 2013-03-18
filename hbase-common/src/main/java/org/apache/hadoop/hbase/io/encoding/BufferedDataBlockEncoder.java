@@ -24,7 +24,8 @@ import java.nio.ByteBuffer;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.KeyValue.SamePrefixComparator;
-import org.apache.hadoop.hbase.io.compress.Compression.Algorithm;
+import org.apache.hadoop.hbase.io.compress.Compression;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.hfile.BlockType;
 import org.apache.hadoop.hbase.util.ByteBufferUtils;
 import org.apache.hadoop.hbase.util.Bytes;
@@ -305,16 +306,19 @@ abstract class BufferedDataBlockEncoder implements DataBlockEncoder {
 
   @Override
   public HFileBlockEncodingContext newDataBlockEncodingContext(
-      Algorithm compressionAlgorithm,
+      Compression.Algorithm compressionAlgorithm,
+      Encryption.Context cryptoContext,
       DataBlockEncoding encoding, byte[] header) {
-    return new HFileBlockDefaultEncodingContext(
-        compressionAlgorithm, encoding, header);
+    return new HFileBlockDefaultEncodingContext(compressionAlgorithm,
+      cryptoContext, encoding, header);
   }
 
   @Override
   public HFileBlockDecodingContext newDataBlockDecodingContext(
-      Algorithm compressionAlgorithm) {
-    return new HFileBlockDefaultDecodingContext(compressionAlgorithm);
+      Compression.Algorithm compressionAlgorithm,
+      Encryption.Context cryptoContext) {
+    return new HFileBlockDefaultDecodingContext(compressionAlgorithm,
+      cryptoContext);
   }
 
   /**
