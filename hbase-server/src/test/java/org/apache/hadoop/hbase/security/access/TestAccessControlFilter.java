@@ -42,6 +42,7 @@ import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.protobuf.ProtobufUtil;
 import org.apache.hadoop.hbase.protobuf.generated.AccessControlProtos.AccessControlService;
 import org.apache.hadoop.hbase.exceptions.AccessDeniedException;
+import org.apache.hadoop.hbase.security.SecureTestUtil;
 import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.junit.AfterClass;
@@ -173,16 +174,20 @@ public class TestAccessControlFilter {
     // test as user with no permission
     DENIED.runAs(new PrivilegedExceptionAction(){
       public Object run() throws Exception {
-        try {
-          Configuration conf = new Configuration(TEST_UTIL.getConfiguration());
-          // force a new RS connection
-          conf.set("testkey", UUID.randomUUID().toString());
-          HTable t = new HTable(conf, TABLE);
-          ResultScanner rs = t.getScanner(new Scan());
-          fail("Attempt to open scanner should have been denied");
-        } catch (AccessDeniedException ade) {
-          // expected
+        Configuration conf = new Configuration(TEST_UTIL.getConfiguration());
+        // force a new RS connection
+        conf.set("testkey", UUID.randomUUID().toString());
+        HTable t = new HTable(conf, TABLE);
+        ResultScanner rs = t.getScanner(new Scan());
+        int rowcnt = 0;
+        for (Result r : rs) {
+          rowcnt++;
+          int rownum = Bytes.toInt(r.getRow());
+          assertFalse(r.containsColumn(FAMILY, PRIVATE_COL));
+          assertTrue(r.containsColumn(FAMILY, PUBLIC_COL));
+          assertEquals("info " + rownum, Bytes.toString(r.getValue(FAMILY, PUBLIC_COL)));
         }
+        assertEquals("Expected 0 rows returned", 0, rowcnt);
         return null;
       }
     });

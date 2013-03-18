@@ -107,6 +107,7 @@ import org.apache.hadoop.hbase.protobuf.generated.MasterMonitorProtos.GetTableDe
 import org.apache.hadoop.hbase.security.access.Permission;
 import org.apache.hadoop.hbase.security.access.TablePermission;
 import org.apache.hadoop.hbase.security.access.UserPermission;
+import org.apache.hadoop.hbase.security.access.UserTablePermissions;
 import org.apache.hadoop.hbase.security.token.AuthenticationTokenIdentifier;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Methods;
@@ -171,11 +172,21 @@ public final class ProtobufUtil {
 
   /**
    * @param bytes Bytes to check.
+   * @param offset Offset into bytes to check
+   * @param length Length of bytes to check
+   * @return True if passed <code>bytes</code> has {@link #PB_MAGIC} for a prefix.
+   */
+  public static boolean isPBMagicPrefix(final byte [] bytes, int offset, int length) {
+    if (bytes == null || (length < PB_MAGIC.length)) return false;
+    return Bytes.compareTo(PB_MAGIC, 0, PB_MAGIC.length, bytes, offset, PB_MAGIC.length) == 0;
+  }
+
+  /**
+   * @param bytes Bytes to check.
    * @return True if passed <code>bytes</code> has {@link #PB_MAGIC} for a prefix.
    */
   public static boolean isPBMagicPrefix(final byte [] bytes) {
-    if (bytes == null || bytes.length < PB_MAGIC.length) return false;
-    return Bytes.compareTo(PB_MAGIC, 0, PB_MAGIC.length, bytes, 0, PB_MAGIC.length) == 0;
+    return isPBMagicPrefix(bytes, 0, bytes.length);
   }
 
   /**
@@ -1501,6 +1512,17 @@ public final class ProtobufUtil {
   }
 
   /**
+   * Convert a UserTablePermissions to a protobuf representation
+   *
+   * @param perm the list of user and table permissions
+   * @return the protobuf UserTablePermissions
+   */
+  public static AccessControlProtos.UserTablePermissions toUserTablePermissions(
+      UserTablePermissions perm) {
+    return toUserTablePermissions(perm.asMultimap());
+  }
+
+  /**
    * Convert a ListMultimap<String, TablePermission> where key is username
    * to a protobuf UserPermission
    *
@@ -1659,6 +1681,31 @@ public final class ProtobufUtil {
         proto.hasPassword() ? proto.getPassword().toByteArray() : null,
         AuthenticationTokenIdentifier.AUTH_TOKEN_TYPE,
         proto.hasService() ? new Text(proto.getService().toStringUtf8()) : null);
+  }
+
+  /**
+   * Set the ACL attribute of a Mutation given a UserTablePermission
+   * @param op The operation
+   * @param perms The user permissions
+   */
+  public static void setMutationACL(Mutation op, UserTablePermissions perms) {
+    setMutationACL(op, perms, false);
+  }
+
+  /**
+   * Set the ACL attribute of a Mutation given a UserTablePermission
+   * @param op The operation
+   * @param perms The user permissions
+   * @param replace True if supplied permissions should replace existing ones.
+   * Otherwise permissions will be merged.
+   */
+  public static void setMutationACL(Mutation op, UserTablePermissions perms,
+      boolean replace) {
+    op.setAttribute(HConstants.OP_ATTRIBUTE_ACL,
+      prependPBMagic(toUserTablePermissions(perms).toByteArray()));
+    if (replace) {
+      op.setAttribute(HConstants.OP_ATTRIBUTE_ACL_REPLACE, Bytes.toBytes(replace));
+    }
   }
 
   /**

@@ -16,17 +16,20 @@
  * limitations under the License.
  */
 
-package org.apache.hadoop.hbase.security.access;
+package org.apache.hadoop.hbase.security;
 
 import java.io.IOException;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.security.User;
+import org.apache.hadoop.hbase.security.access.AccessController;
+import org.apache.hadoop.hbase.security.access.SecureBulkLoadEndpoint;
 
 /**
  * Utility methods for testing security
  */
 public class SecureTestUtil {
+
   public static void enableSecurity(Configuration conf) throws IOException {
     conf.set("hadoop.security.authorization", "false");
     conf.set("hadoop.security.authentication", "simple");
@@ -36,5 +39,11 @@ public class SecureTestUtil {
     // add the process running user to superusers
     String currentUser = User.getCurrent().getName();
     conf.set("hbase.superuser", "admin,"+currentUser);
+  }
+
+  public static boolean isSecurityEnabled(Configuration conf) {
+    return conf.get("hbase.coprocessor.region.classes") != null &&
+        conf.get("hbase.coprocessor.master.classes") != null &&
+        conf.get("hbase.superuser") != null;
   }
 }

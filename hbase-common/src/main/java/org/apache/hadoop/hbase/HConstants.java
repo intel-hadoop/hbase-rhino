@@ -808,6 +808,16 @@ public final class HConstants {
       "hbase.node.health.failure.threshold";
   public static final int DEFAULT_HEALTH_FAILURE_THRESHOLD = 3;
 
+  /*
+   * KeyValue attributes for cell level security
+   */
+  /** Cell level ACL. Value is a PermissionList writable as byte[] e.g. via
+   * Writables.getBytes(PermissionList) */
+  public static final String OP_ATTRIBUTE_ACL = "acl";
+  /** Flag if cell level ACL should replace existing permissions. Value is a boolean as byte[]
+   * e.g. via Bytes.toBytes(Boolean) */
+  public static final String OP_ATTRIBUTE_ACL_REPLACE = "acl.replace";
+
   private HConstants() {
     // Can't be instantiated with this ctor.
   }

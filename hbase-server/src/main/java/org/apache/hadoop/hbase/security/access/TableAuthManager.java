@@ -1,3 +1,4 @@
+
 /*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -21,11 +22,15 @@ package org.apache.hadoop.hbase.security.access;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
+
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.exceptions.DeserializationException;
+import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.client.Get;
+import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.zookeeper.ZooKeeperWatcher;
@@ -232,8 +237,8 @@ public class TableAuthManager {
           return true;
         }
       }
-    } else if (LOG.isDebugEnabled()) {
-      LOG.debug("No permissions found");
+    } else if (LOG.isTraceEnabled()) {
+      LOG.trace("No permissions found");
     }
 
     return false;
@@ -279,45 +284,112 @@ public class TableAuthManager {
           return true;
         }
       }
-    } else if (LOG.isDebugEnabled()) {
-      LOG.debug("No permissions found for table="+Bytes.toStringBinary(table));
+    } else if (LOG.isTraceEnabled()) {
+      LOG.trace("No permissions found for table="+Bytes.toStringBinary(table));
     }
     return false;
   }
 
-  public boolean authorize(User user, byte[] table, KeyValue kv,
-      Permission.Action action) {
-    PermissionCache<TablePermission> tablePerms = tableCache.get(table);
-    if (tablePerms != null) {
-      List<TablePermission> userPerms = tablePerms.getUser(user.getShortName());
-      if (authorize(userPerms, table, kv, action)) {
-        return true;
+  public List<TablePermission> getCellPermissionsForUser(HRegion region, User user,
+      KeyValue kv) throws IOException {
+    byte[] qualifier = AccessControlLists.getQualifierFor(kv);
+    Get get = new Get(kv.getRow())
+      .addColumn(AccessControlLists.ACL_CF_NAME, qualifier)
+      .setMaxVersions(1)
+      .setFilter(new AccessControlFilter()); // set null ACF to avoid recursive checks
+    long ts = kv.getTimestamp();
+    if (ts != HConstants.LATEST_TIMESTAMP) {
+      get.setTimeRange(0L, ts + 1);
+    }
+    KeyValue aclKV = region.get(get)
+      .getColumnLatest(AccessControlLists.ACL_CF_NAME, qualifier);
+    if (aclKV != null) {
+      UserTablePermissions cellPerms =
+        UserTablePermissions.fromBytes(aclKV.getBuffer(), aclKV.getValueOffset(),
+          aclKV.getValueLength());
+      List<TablePermission> perms = Lists.newArrayList();
+      // Get perms for the user from the cell ACL
+      List<TablePermission> userPerms = cellPerms.get(user.getShortName());
+      if (userPerms != null) {
+        perms.addAll(userPerms);
       }
+      // Get perms for the user's groups from the cell ACL
+      String groupNames[] = user.getGroupNames();
+      for (String group: groupNames) {
+        List<TablePermission> groupPerms =
+          cellPerms.get(AccessControlLists.GROUP_PREFIX + group);
+        if (groupPerms != null) {
+          perms.addAll(groupPerms);
+        }
+      }
+      return !perms.isEmpty() ? perms : null;
+    }
+    return null;
+  }
 
-      String[] groupNames = user.getGroupNames();
-      if (groupNames != null) {
-        for (String group : groupNames) {
-          List<TablePermission> groupPerms = tablePerms.getGroup(group);
-          if (authorize(groupPerms, table, kv, action)) {
+  /**
+   * Authorize a user for a given KV. This is called from AccessControlFilter.
+   */
+  public boolean authorize(User user, HRegion region, KeyValue kv,
+    boolean checkCachedPerms, Permission.Action action) {
+    byte[] tableName = region.getTableDesc().getName();
+    boolean isCatalogTable = Bytes.equals(HConstants.ROOT_TABLE_NAME, tableName) ||
+      Bytes.equals(HConstants.META_TABLE_NAME, tableName);
+
+    // Special case handling for catalog tables
+    if (action == Permission.Action.READ && isCatalogTable) {
+      return true;
+    }
+
+    // Are there permissions for this user for this KV?
+    if (!isCatalogTable) try {
+      List<TablePermission> perms = getCellPermissionsForUser(region, user, kv);
+      if (perms != null) {
+        for (Permission p: perms) {
+          if (p.implies(action)) {
+            if (LOG.isTraceEnabled()) {
+              LOG.trace("Action " + action + " allowed for user " +
+                user.getShortName() + " for kv " + kv);
+            }
             return true;
           }
         }
       }
+    } catch (IOException e) {
+      LOG.error("Failed parse of ACLs for KV " + kv.toString(), e);
+      // Fall through to check with the table and CF perms we were able
+      // to collect regardless
     }
-    return false;
-  }
 
-  private boolean authorize(List<TablePermission> perms, byte[] table, KeyValue kv,
-      Permission.Action action) {
-    if (perms != null) {
-      for (TablePermission p : perms) {
-        if (p.implies(table, kv, action)) {
-          return true;
+    if (LOG.isTraceEnabled()) {
+      LOG.trace("No perms for user " + user.getShortName() + " for kv " + kv);
+    }
+
+    // No, can we apply cached CF and table level perms?
+    if (checkCachedPerms) {
+      byte[] family = kv.getFamily();
+      byte[] qualifier = kv.getQualifier();
+      // User is authorized at table or CF level
+      if (authorizeUser(user.getShortName(), tableName, family,
+          qualifier, action)) {
+        if (LOG.isTraceEnabled()) {
+          LOG.trace("User " + user.getShortName() + " is authorized");
+        }
+        return true;
+      }
+      String groupNames[] = user.getGroupNames();
+      if (groupNames != null) {
+        for (String group: groupNames) {
+          // TODO: authorizeGroup should check qualifier too?
+          // Group is authorized at table or CF level
+          if (authorizeGroup(group, tableName, family, action)) {
+            if (LOG.isTraceEnabled()) {
+              LOG.trace("Group " + group + " is authorized");
+            }
+            return true;
+          }
         }
       }
-    } else if (LOG.isDebugEnabled()) {
-      LOG.debug("No permissions for authorize() check, table=" +
-          Bytes.toStringBinary(table));
     }
 
     return false;
