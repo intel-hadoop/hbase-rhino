@@ -258,5 +258,67 @@
         </plugins>
       </build>
     </profile>
+    <!--
+      Profile for building against a crypto enabled Hadoop. Activate using:
+       mvn -Pcrypto
+    -->
+    <profile>
+      <id>crypto</id>
+      <activation>
+        <property>
+          <name>crypto</name>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>build-helper-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>add-source</id>
+                <goals>
+                  <goal>add-source</goal>
+                </goals>
+                <configuration>
+                  <sources>
+                    <source>${project.basedir}/crypto/main/with/java</source>
+                  </sources>
+                </configuration>
+              </execution>
+	    </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <profile>
+      <id>nocrypto</id>
+      <activation>
+        <property>
+          <name>!crypto</name>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>build-helper-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>add-source</id>
+                <goals>
+                  <goal>add-source</goal>
+                </goals>
+                <configuration>
+                  <sources>
+                    <source>${project.basedir}/crypto/main/without/java</source>
+                  </sources>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
   </profiles>
 </project>

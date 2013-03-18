@@ -21,11 +21,11 @@ import java.io.DataInput;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.HashMap;
+import java.util.Map;
 import java.security.DigestException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.HashMap;
-import java.util.Map;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -37,7 +37,6 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.hadoop.hbase.util.Methods;
 import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.io.compress.CodecPool;
@@ -47,6 +46,13 @@ import org.apache.hadoop.io.compress.CompressionOutputStream;
 import org.apache.hadoop.io.compress.Compressor;
 import org.apache.hadoop.io.compress.Decompressor;
 import org.apache.hadoop.io.compress.DoNotPool;
+import org.apache.hadoop.io.crypto.CryptoCodec;
+import org.apache.hadoop.io.crypto.CryptoContext;
+import org.apache.hadoop.io.crypto.CryptoException;
+import org.apache.hadoop.io.crypto.Decryptor;
+import org.apache.hadoop.io.crypto.Encryptor;
+import org.apache.hadoop.io.crypto.Key;
+import org.apache.hadoop.io.crypto.KeyProvider;
 import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hadoop.util.StringUtils;
 
@@ -74,17 +80,12 @@ public abstract class Encryption {
     protected byte[] keyBytes;
     protected String keyBytesHash;
     protected Configuration conf;
-    protected Object delegate;
+    protected CryptoContext delegate;
 
     protected Context(Configuration conf) {
       this.conf = conf;
       this.conf.setBoolean("hadoop.native.lib", true);
-      try {
-        Class<?> delegateClass = Class.forName("org.apache.hadoop.io.crypto.CryptoContext");
-        delegate = delegateClass.newInstance();
-      } catch (Exception e) {
-        throw new RuntimeException(e);
-      }
+      this.delegate = new CryptoContext();
     }
 
     @Override
@@ -111,7 +112,7 @@ public abstract class Encryption {
       this.conf = conf;
     }
 
-    public Object getDelegate() {
+    public CryptoContext getDelegate() {
       return delegate;
     }
 
@@ -125,55 +126,22 @@ public abstract class Encryption {
 
     public void setKey(String string) {
       try {
-        Object key = callStatic("org.apache.hadoop.io.crypto.Key",
-          "derive",
-          new Class[] { String.class },
-          new Object[] { string });
-        call(delegate,
-          "setKey",
-          new Class[] { Class.forName("org.apache.hadoop.io.crypto.Key") },
-          new Object[] { key });
-        keyBytes = (byte[]) call(key,
-          "getRawKey",
-          new Class[] {},
-          new Object[] {});
+        Key key = Key.derive(string);
+        delegate.setKey(key);
+        keyBytes = key.getRawKey();
         keyBytesHash = StringUtils.byteToHexString(hash256(keyBytes));
-      } catch (Exception e) {
+      } catch (CryptoException e) {
         throw new RuntimeException(e);
       }
     }
 
-    @SuppressWarnings({ "rawtypes" })
     public void setKey(String algorithm, String format, byte[] rawKey) {
-      try {
-        Class keyClass = getClassLoaderForCodec()
-          .loadClass("org.apache.hadoop.io.crypto.Key");
-        Object key = keyClass.newInstance();
-        call(key,
-          "setCryptographicAlgorithm",
-          new Class[] { String.class },
-          new Object[] { algorithm } );
-        call(key,
-          "setCryptographicLength",
-          new Class[] { int.class },
-          new Object[] { rawKey.length * Bytes.SIZEOF_BYTE } );
-        if (format != null) {
-          call(key,
-            "setFormat",
-            new Class[] { String.class },
-            new Object[] { format } );
-        }
-        call(key,
-          "setRawKey",
-          new Class[] { byte[].class },
-          new Object[] { rawKey } );
-        call(delegate,
-          "setKey",
-          new Class[] { keyClass },
-          new Object[] { key });
-      } catch (Exception e) {
-        throw new RuntimeException(e);
-      }
+      Key key = new Key();
+      key.setCryptographicAlgorithm(algorithm);
+      key.setCryptographicLength(rawKey.length * Bytes.SIZEOF_BYTE);
+      key.setFormat(format);
+      key.setRawKey(rawKey);
+      delegate.setKey(key);
       keyBytes = rawKey;
       keyBytesHash = StringUtils.byteToHexString(hash256(keyBytes));
     }
@@ -258,25 +226,10 @@ public abstract class Encryption {
 
     abstract CompressionCodec getCodec(Configuration conf);
 
-    @SuppressWarnings("rawtypes")
-    public InputStream createDecryptionStream( InputStream downStream,
+    public InputStream createDecryptionStream(InputStream downStream,
         Decompressor decryptor, Context context) throws IOException {
-      CompressionCodec codec = getCodec(context.getConf());
-      ((Configurable)codec).setConf(context.getConf());
-      try {
-        Class contextClass = getClassLoaderForCodec()
-            .loadClass("org.apache.hadoop.io.crypto.CryptoContext");
-        call(codec,
-          "setCryptoContext",
-          new Class[] { contextClass },
-          new Object[] { context.getDelegate() });
-        call(decryptor,
-          "setCryptoContext",
-          new Class[] { contextClass },
-          new Object[] { context.getDelegate() });
-      } catch (Exception e) {
-        throw new RuntimeException(e);
-      }
+      CompressionCodec codec = getEncryptionCodec(context);
+      ((Decryptor)decryptor).setCryptoContext(context.getDelegate());
       return codec.createInputStream(downStream, decryptor);
     }
 
@@ -284,27 +237,10 @@ public abstract class Encryption {
      * Creates an encryption stream without any additional wrapping into
      * buffering streams.
      */
-    @SuppressWarnings("rawtypes")
     public CompressionOutputStream createEncryptionStream(OutputStream downStream,
         Compressor encryptor, Context context) throws IOException {
-      CompressionCodec codec = getCodec(context.getConf());
-      if (codec instanceof Configurable) {
-        ((Configurable)codec).setConf(context.getConf());
-      }
-      try {
-        Class contextClass = getClassLoaderForCodec()
-            .loadClass("org.apache.hadoop.io.crypto.CryptoContext");
-        call(codec,
-          "setCryptoContext",
-          new Class[] { contextClass },
-          new Object[] { context.getDelegate() });
-        call(encryptor,
-          "setCryptoContext",
-          new Class[] { contextClass },
-          new Object[] { context.getDelegate() });
-      } catch (Exception e) {
-        throw new RuntimeException(e);
-      }
+      CompressionCodec codec = getEncryptionCodec(context);
+      ((Encryptor)encryptor).setCryptoContext(context.getDelegate());
       return codec.createOutputStream(downStream, encryptor);
     }
 
@@ -391,19 +327,10 @@ public abstract class Encryption {
   /**
    * @return the crypto codec for the given algorithm
    */
-  @SuppressWarnings("rawtypes")
   public static CompressionCodec getEncryptionCodec(Context context) {
-    CompressionCodec codec = context.getAlgorithm().getCodec(context.getConf());
-    try {
-      Class contextClass = getClassLoaderForCodec()
-          .loadClass("org.apache.hadoop.io.crypto.CryptoContext");
-      call(codec,
-        "setCryptoContext",
-        new Class[] { contextClass },
-        new Object[] { context.getDelegate() });
-    } catch (Exception e) {
-      throw new RuntimeException(e);
-    }
+    CompressionCodec codec = null;
+    codec = context.getAlgorithm().getCodec(context.getConf());
+    ((CryptoCodec)codec).setCryptoContext(context.getDelegate());
     return codec;
   }
 
@@ -521,29 +448,26 @@ public abstract class Encryption {
    * Cache key providers to avoid expensive (re)initialization for each query.
    */
 
-  private static final Map<Pair<String,String>, Object> providerCache =
-    new HashMap<Pair<String,String>, Object>();
-  private static Object providerForTesting;
+  private static final Map<Pair<String,String>, KeyProvider> providerCache =
+    new HashMap<Pair<String,String>, KeyProvider>();
+  private static KeyProvider providerForTesting;
 
-  private static Object getKeyProvider(Configuration conf) {
+  private static KeyProvider getKeyProvider(Configuration conf) {
     if (providerForTesting != null) {
       return providerForTesting;
     }
-    String providerClassName = conf.get(HConstants.CRYPTO_KEYPROVIDER_CONF_KEY,
-      "org.apache.hadoop.io.crypto.KeyStoreKeyProvider");
-    String providerParameters = conf.get(HConstants.CRYPTO_KEYPROVIDER_PARAMETERS_KEY, "");
-    Pair<String,String> providerCacheKey = new Pair<String,String>(providerClassName,
-      providerParameters);
     synchronized (providerCache) {
-      Object provider = providerCache.get(providerCacheKey);
+      String providerClassName = conf.get(HConstants.CRYPTO_KEYPROVIDER_CONF_KEY,
+        "org.apache.hadoop.io.crypto.KeyStoreKeyProvider");
+      String providerParameters = conf.get(HConstants.CRYPTO_KEYPROVIDER_PARAMETERS_KEY, "");
+      Pair<String,String> providerCacheKey = new Pair<String,String>(providerClassName,
+        providerParameters);
+      KeyProvider provider = providerCache.get(providerCacheKey);
       if (provider == null) try {
-        provider = ReflectionUtils.newInstance(getClassLoaderForCodec()
+        provider = (KeyProvider)ReflectionUtils.newInstance(getClassLoaderForCodec()
             .loadClass(providerClassName),
           conf);
-        call(provider,
-          "init",
-          new Class[] { String.class },
-          new Object[] { providerParameters });
+        provider.init(providerParameters);
       } catch (Exception e) {
         throw new RuntimeException(e);
       }
@@ -565,11 +489,8 @@ public abstract class Encryption {
   @VisibleForTesting
   public static void injectProviderForTesting(String providerClass, String providerParameters) {
     try {
-      Object provider = Class.forName(providerClass).newInstance();
-      call(provider,
-        "init",
-        new Class[] { String.class },
-        new Object[] { providerParameters });
+      KeyProvider provider = (KeyProvider)Class.forName(providerClass).newInstance();
+      provider.init(providerParameters);
       providerForTesting = provider;
     } catch (Exception e) {
       throw new RuntimeException(e);
@@ -585,17 +506,11 @@ public abstract class Encryption {
    */
   public static byte[] getSecretKeyForSubject(String subject, Configuration conf)
       throws IOException {
-    Object provider = getKeyProvider(conf);
+    KeyProvider provider = (KeyProvider)getKeyProvider(conf);
     if (provider != null) try {
-      Object[] keys = (Object[]) call(provider,
-        "getKeys",
-        new Class[] { String[].class },
-        new Object[] { new String[] { subject } });
+      Key[] keys = provider.getKeys(new String[] { subject });
       if (keys != null && keys.length > 0) {
-        return (byte[]) call(keys[0],
-          "getRawKey",
-          new Class[] {},
-          new Object[] {});
+        return (byte[]) keys[0].getRawKey();
       }
     } catch (Exception e) {
       throw new IOException(e);
@@ -682,25 +597,5 @@ public abstract class Encryption {
     } catch (DigestException e) {
       throw new RuntimeException(e);
     }
-  }
-
-  /* Reflection helper methods */
-
-  @SuppressWarnings({ "rawtypes" })
-  private static Object callStatic(String clazz, String methodName, Class[] types,
-      Object[] args) throws Exception {
-    return call(clazz, null, methodName, types, args);
-  }
-
-  @SuppressWarnings({ "rawtypes" })
-  private static Object call(String clazz, Object instance, String methodName,
-      Class[] types, Object[] args) throws Exception {
-    return Methods.call(Class.forName(clazz), instance, methodName, types, args);
-  }
-
-  @SuppressWarnings({ "rawtypes" })
-  private static Object call(Object instance, String methodName,
-      Class[] types, Object[] args) throws Exception {
-    return Methods.call(instance.getClass(), instance, methodName, types, args);
   }
 }
