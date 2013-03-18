@@ -33,10 +33,14 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.exceptions.DeserializationException;
+import org.apache.hadoop.hbase.exceptions.TableNotDisabledException;
+import org.apache.hadoop.hbase.exceptions.TableNotEnabledException;
+import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.TableDescriptors;
 import org.apache.hadoop.hbase.catalog.MetaReader;
 import org.apache.hadoop.hbase.client.Delete;
 import org.apache.hadoop.hbase.client.Get;
@@ -45,10 +49,9 @@ import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.ResultScanner;
 import org.apache.hadoop.hbase.client.Scan;
-import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.filter.QualifierFilter;
 import org.apache.hadoop.hbase.filter.RegexStringComparator;
-import org.apache.hadoop.hbase.io.compress.Compression;
+import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.master.MasterServices;
 import org.apache.hadoop.hbase.protobuf.ProtobufUtil;
 import org.apache.hadoop.hbase.protobuf.generated.AccessControlProtos;
@@ -94,18 +97,33 @@ public class AccessControlLists {
   /** Column family used to store ACL grants */
   public static final String ACL_LIST_FAMILY_STR = "l";
   public static final byte[] ACL_LIST_FAMILY = Bytes.toBytes(ACL_LIST_FAMILY_STR);
+  /** name of shadow CF for access control lists */
+  public final static byte[] ACL_CF_NAME = ACL_TABLE_NAME;
 
   /** Table descriptor for ACL internal table */
-  public static final HTableDescriptor ACL_TABLEDESC = new HTableDescriptor(
-      ACL_TABLE_NAME);
+  public static final HTableDescriptor ACL_TABLEDESC = new HTableDescriptor(ACL_TABLE_NAME);
   static {
-    ACL_TABLEDESC.addFamily(
-        new HColumnDescriptor(ACL_LIST_FAMILY,
-            10, // Ten is arbitrary number.  Keep versions to help debugging.
-            Compression.Algorithm.NONE.getName(), true, true, 8 * 1024,
-            HConstants.FOREVER, BloomType.NONE.toString(),
-            HConstants.REPLICATION_SCOPE_LOCAL));
+    ACL_TABLEDESC.addFamily(new HColumnDescriptor(ACL_LIST_FAMILY)
+      .setBlockCacheEnabled(true)
+      .setBlocksize(8*1024)
+      .setCacheDataOnWrite(true)
+      .setCacheIndexesOnWrite(true)
+      .setInMemory(true)
+      .setMaxVersions(10) // Keep some versions to aid in debugging
+      .setScope(HConstants.REPLICATION_SCOPE_LOCAL)
+      .setTimeToLive(HConstants.FOREVER));
   }
+
+  /** Column descriptor for internal shadow ACL column */
+  public static final HColumnDescriptor ACL_COLUMNDESC = new HColumnDescriptor(ACL_CF_NAME)
+    .setBlockCacheEnabled(true)
+    .setBlocksize(8*1024)
+    .setBloomFilterType(BloomType.ROWCOL)
+    .setCacheBloomsOnWrite(true)
+    .setCacheIndexesOnWrite(true)
+    .setMaxVersions(10) // Keep some versions to aid in debugging
+    .setScope(HConstants.REPLICATION_SCOPE_LOCAL)
+    .setTimeToLive(HConstants.FOREVER);
 
   /**
    * Delimiter to separate user, column family, and qualifier in
@@ -123,6 +141,53 @@ public class AccessControlLists {
    * @param master reference to HMaster
    */
   static void init(MasterServices master) throws IOException {
+    // For each table, insure the ACL shadow CF exists. If not, create it.
+    TableDescriptors tables = master.getTableDescriptors();
+    for (HTableDescriptor desc: tables.getAll().values()) {
+      if (!desc.hasFamily(ACL_CF_NAME)) {
+        // XXX: This can only happen once, if security is enabled on a cluster
+        // that did not have it previously. We issue instructions to disable
+        // the table, alter it, and reenable it (if it was enabled). This is
+        // unsatisfactory because we will be racing with any number of other
+        // asynchronous processes in the master, but other alternatives for
+        // aborting pending opens will be worse. Here we act like an admin
+        // client undertaking a schema update. For a very large table the
+        // number of retries below may not be sufficient. Blindly retrying
+        // like this is inelegant to put it mildly. Perhaps we can introduce
+        // an AssignmentManager API like waitForAllUnassigned(List<HRI>) and
+        // waitForAllAssigned(List<HRI>). Anyway, we can document that the
+        // creation of shadow CFs for ACLs on existing tables should be
+        // created by an admin (or migration tool) before shutting down to
+        // restart with security enabled, to avoid executing the below at
+        // runtime.
+        LOG.debug("Adding ACL metacolumn to table " + desc.getNameAsString());
+        boolean enabled = true;
+        try {
+          master.disableTable(desc.getName());
+        } catch (TableNotEnabledException e) {
+          enabled = false;
+        }
+        int retries = 30;
+        do {
+          try {
+            Thread.sleep(5000);
+            master.addColumn(desc.getName(), ACL_COLUMNDESC);
+            break;
+          } catch (InterruptedException e) {
+            Thread.interrupted();
+            break;
+          } catch (TableNotDisabledException e) {
+            // retry
+          }
+        } while (--retries > 0);
+        if (enabled) {
+          master.enableTable(desc.getName());
+        }
+        LOG.debug("Completed adding ACL metacolumn to table " +
+          desc.getNameAsString());
+      }
+    }
+    // Create the ACL table if it does not exist yet
     if (!MetaReader.tableExists(master.getCatalogTracker(), ACL_TABLE_NAME_STR)) {
       master.createTable(ACL_TABLEDESC, null);
     }
@@ -481,8 +546,8 @@ public class AccessControlLists {
 
     byte[] key = kv.getQualifier();
     byte[] value = kv.getValue();
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("Read acl: kv ["+
+    if (LOG.isTraceEnabled()) {
+      LOG.trace("Read acl: kv ["+
                 Bytes.toStringBinary(key)+": "+
                 Bytes.toStringBinary(value)+"]");
     }
@@ -574,5 +639,17 @@ public class AccessControlLists {
     }
 
     return aclKey.substring(GROUP_PREFIX.length());
+  }
+
+  /**
+   * Return the qualifier for the ACL in the shadow CF for the given KeyValue
+   */
+  public static byte[] getQualifierFor(Cell cell) {
+    byte[] bytes = new byte[cell.getFamilyLength() + cell.getQualifierLength()];
+    int pos = Bytes.putBytes(bytes, 0, cell.getFamilyArray(), cell.getFamilyOffset(),
+      cell.getFamilyLength());
+    pos = Bytes.putBytes(bytes, pos, cell.getQualifierArray(), cell.getQualifierOffset(),
+      cell.getQualifierLength());
+    return bytes;
   }
 }

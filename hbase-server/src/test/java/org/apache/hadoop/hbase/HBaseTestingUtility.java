@@ -2425,12 +2425,23 @@ public class HBaseTestingUtility extends HBaseCommonTestingUtility {
     HColumnDescriptor hcd = new HColumnDescriptor(columnFamily);
     hcd.setDataBlockEncoding(dataBlockEncoding);
     hcd.setCompressionType(compression);
-    desc.addFamily(hcd);
+    return createPreSplitLoadTestTable(conf, desc, hcd);
+  }
+
+  /**
+   * Creates a pre-split table for load testing. If the table already exists,
+   * logs a warning and continues.
+   * @return the number of regions the table was split into
+   */
+  public static int createPreSplitLoadTestTable(Configuration conf,
+      HTableDescriptor htd, HColumnDescriptor hcd) throws IOException {
+    if (!htd.hasFamily(hcd.getName())) {
+      htd.addFamily(hcd);
+    }
 
     int totalNumberOfRegions = 0;
+    HBaseAdmin admin = new HBaseAdmin(conf);
     try {
-      HBaseAdmin admin = new HBaseAdmin(conf);
-
       // create a table a pre-splits regions.
       // The number of splits is set as:
       //    region servers * regions per region server).
@@ -2447,15 +2458,18 @@ public class HBaseTestingUtility extends HBaseCommonTestingUtility {
       byte[][] splits = new RegionSplitter.HexStringSplit().split(
           totalNumberOfRegions);
 
-      admin.createTable(desc, splits);
+      admin.createTable(htd, splits);
       admin.close();
     } catch (MasterNotRunningException e) {
       LOG.error("Master not running", e);
       throw new IOException(e);
     } catch (TableExistsException e) {
-      LOG.warn("Table " + Bytes.toStringBinary(tableName) +
+      LOG.warn("Table " + Bytes.toStringBinary(htd.getName()) +
           " already exists, continuing");
+    } finally {
+      admin.close();
     }
+
     return totalNumberOfRegions;
   }
 

@@ -29,11 +29,13 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.LargeTests;
 import org.apache.hadoop.hbase.exceptions.TableNotFoundException;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
 import org.apache.hadoop.hbase.io.compress.Compression;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
+import org.apache.hadoop.hbase.security.SecureTestUtil;
 import org.apache.hadoop.hbase.util.test.LoadTestDataGenerator;
 import org.junit.After;
 import org.junit.Before;
@@ -124,6 +126,28 @@ public class TestMiniClusterLoadSequential {
     assertEquals(numKeys, readerThreads.getNumKeysVerified());
   }
 
+  protected MultiThreadedReader prepareReaderThreads(LoadTestDataGenerator dataGen,
+      Configuration conf, byte[] table, double verifyPercent) {
+      MultiThreadedReader reader = new MultiThreadedReader(dataGen, conf, table, verifyPercent);
+    return reader;
+  }
+
+  protected MultiThreadedWriter prepareWriterThreads(LoadTestDataGenerator dataGen,
+      Configuration conf, byte[] table) {
+    MultiThreadedWriter writer = new MultiThreadedWriter(dataGen, conf, table);
+    writer.setMultiPut(isMultiPut);
+    return writer;
+  }
+
+  protected void createPreSplitLoadTestTable(HTableDescriptor htd, HColumnDescriptor hcd)
+      throws IOException {
+    int numRegions = HBaseTestingUtility.createPreSplitLoadTestTable(conf, htd, hcd);
+    if (SecureTestUtil.isSecurityEnabled(conf)) {
+      numRegions++; // Account for the _acl_ table too
+    }
+    TEST_UTIL.waitUntilAllRegionsAssigned(numRegions);
+  }
+
   protected void prepareForLoadTest() throws IOException {
     LOG.info("Starting load test: dataBlockEncoding=" + dataBlockEncoding +
         ", isMultiPut=" + isMultiPut);
@@ -135,15 +159,15 @@ public class TestMiniClusterLoadSequential {
     }
     admin.close();
 
-    int numRegions = HBaseTestingUtility.createPreSplitLoadTestTable(conf,
-        TABLE, CF, compression, dataBlockEncoding);
-
-    TEST_UTIL.waitUntilAllRegionsAssigned(numRegions);
+    HTableDescriptor htd = new HTableDescriptor(TABLE);
+    HColumnDescriptor hcd = new HColumnDescriptor(CF)
+      .setCompressionType(compression)
+      .setDataBlockEncoding(dataBlockEncoding);
+    createPreSplitLoadTestTable(htd, hcd);
 
     LoadTestDataGenerator dataGen = new MultiThreadedAction.DefaultDataGenerator(CF);
-    writerThreads = new MultiThreadedWriter(dataGen, conf, TABLE);
-    writerThreads.setMultiPut(isMultiPut);
-    readerThreads = new MultiThreadedReader(dataGen, conf, TABLE, 100);
+    writerThreads = prepareWriterThreads(dataGen, conf, TABLE);
+    readerThreads = prepareReaderThreads(dataGen, conf, TABLE, 100);
   }
 
   protected int numKeys() {
