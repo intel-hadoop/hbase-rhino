@@ -37,6 +37,7 @@ import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.fs.HFileSystem;
 import org.apache.hadoop.hbase.io.compress.Compression;
 import org.apache.hadoop.hbase.io.compress.Compression.Algorithm;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
 import org.apache.hadoop.hbase.io.encoding.HFileBlockDecodingContext;
 import org.apache.hadoop.hbase.io.encoding.HFileBlockDefaultDecodingContext;
@@ -707,20 +708,22 @@ public class HFileBlock implements Cacheable {
 
     /**
      * @param compressionAlgorithm compression algorithm to use
+     * @param cryptoContext crypto context
      * @param dataBlockEncoder data block encoding algorithm to use
      * @param checksumType type of checksum
      * @param bytesPerChecksum bytes per checksum
      */
     public Writer(Compression.Algorithm compressionAlgorithm,
-          HFileDataBlockEncoder dataBlockEncoder, boolean includesMemstoreTS,
-          ChecksumType checksumType, int bytesPerChecksum) {
+        Encryption.Context cryptoContext, HFileDataBlockEncoder dataBlockEncoder,
+        boolean includesMemstoreTS, ChecksumType checksumType, int bytesPerChecksum) {
       this.dataBlockEncoder = dataBlockEncoder != null
           ? dataBlockEncoder : NoOpDataBlockEncoder.INSTANCE;
       defaultBlockEncodingCtx =
-        new HFileBlockDefaultEncodingContext(compressionAlgorithm, null, HConstants.HFILEBLOCK_DUMMY_HEADER);
+        new HFileBlockDefaultEncodingContext(compressionAlgorithm, cryptoContext, null,
+          HConstants.HFILEBLOCK_DUMMY_HEADER);
       dataBlockEncodingCtx =
-        this.dataBlockEncoder.newOnDiskDataBlockEncodingContext(
-            compressionAlgorithm, HConstants.HFILEBLOCK_DUMMY_HEADER);
+        this.dataBlockEncoder.newOnDiskDataBlockEncodingContext(compressionAlgorithm,
+          cryptoContext, HConstants.HFILEBLOCK_DUMMY_HEADER);
 
       if (bytesPerChecksum < HConstants.HFILEBLOCK_HEADER_SIZE) {
         throw new RuntimeException("Unsupported value of bytesPerChecksum. " +
@@ -1141,6 +1144,9 @@ public class HFileBlock implements Cacheable {
     /** Compression algorithm used by the {@link HFile} */
     protected Compression.Algorithm compressAlgo;
 
+    /** Crypto context */
+    protected Encryption.Context cryptoContext;
+
     /** The size of the file we are reading from, or -1 if unknown. */
     protected long fileSize;
 
@@ -1346,10 +1352,11 @@ public class HFileBlock implements Cacheable {
         };
 
     public FSReaderV2(FSDataInputStream istream, 
-        FSDataInputStream istreamNoFsChecksum, Algorithm compressAlgo,
-        long fileSize, int minorVersion, HFileSystem hfs, Path path) 
+        FSDataInputStream istreamNoFsChecksum, Compression.Algorithm compressAlgo,
+        Encryption.Context cryptoContext, long fileSize, int minorVersion,
+        HFileSystem hfs, Path path)
       throws IOException {
-      super(istream, istreamNoFsChecksum, compressAlgo, fileSize, 
+      super(istream, istreamNoFsChecksum, compressAlgo, fileSize,
             minorVersion, hfs, path);
 
       if (hfs != null) {
@@ -1370,18 +1377,19 @@ public class HFileBlock implements Cacheable {
       }
       this.useHBaseChecksumConfigured = useHBaseChecksum;
       defaultDecodingCtx =
-        new HFileBlockDefaultDecodingContext(compressAlgo);
+        new HFileBlockDefaultDecodingContext(compressAlgo, cryptoContext);
       encodedBlockDecodingCtx =
-          new HFileBlockDefaultDecodingContext(compressAlgo);
+        new HFileBlockDefaultDecodingContext(compressAlgo, cryptoContext);
+      this.cryptoContext = cryptoContext;
     }
 
     /**
      * A constructor that reads files with the latest minor version.
      * This is used by unit tests only.
      */
-    FSReaderV2(FSDataInputStream istream, Algorithm compressAlgo,
-        long fileSize) throws IOException {
-      this(istream, istream, compressAlgo, fileSize, 
+    FSReaderV2(FSDataInputStream istream, Compression.Algorithm compressAlgo,
+        Encryption.Context cryptoContext, long fileSize) throws IOException {
+      this(istream, istream, compressAlgo, cryptoContext, fileSize, 
            HFileReaderV2.MAX_MINOR_VERSION, null, null);
     }
 
@@ -1606,7 +1614,10 @@ public class HFileBlock implements Cacheable {
       boolean isCompressed =
         compressAlgo != null
             && compressAlgo != Compression.Algorithm.NONE;
-      if (!isCompressed) {
+
+      boolean isEncrypted = cryptoContext != null;
+
+      if (!isCompressed && !isEncrypted) {
         b.assumeUncompressed();
       }
 
@@ -1615,7 +1626,7 @@ public class HFileBlock implements Cacheable {
         return null;             // checksum mismatch
       }
 
-      if (isCompressed) {
+      if (isCompressed || isEncrypted) {
         // This will allocate a new buffer but keep header bytes.
         b.allocateBuffer(nextBlockOnDiskSize > 0);
         if (b.blockType.equals(BlockType.ENCODED_DATA)) {
@@ -1663,8 +1674,8 @@ public class HFileBlock implements Cacheable {
 
     void setDataBlockEncoder(HFileDataBlockEncoder encoder) {
       this.dataBlockEncoder = encoder;
-      encodedBlockDecodingCtx = encoder.newOnDiskDataBlockDecodingContext(
-          this.compressAlgo);
+      encodedBlockDecodingCtx = encoder.newOnDiskDataBlockDecodingContext(compressAlgo,
+        cryptoContext);
     }
 
     /**

@@ -22,7 +22,8 @@ import java.nio.ByteBuffer;
 
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.hbase.KeyValue;
-import org.apache.hadoop.hbase.io.compress.Compression.Algorithm;
+import org.apache.hadoop.hbase.io.compress.Compression;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.io.RawComparator;
 
 /**
@@ -112,6 +113,8 @@ public interface DataBlockEncoder {
    * @param compressionAlgorithm
    *          compression algorithm used if the final data needs to be
    *          compressed
+   * @param cryptoContext
+   *          encryption context
    * @param encoding
    *          encoding strategy used
    * @param headerBytes
@@ -120,7 +123,9 @@ public interface DataBlockEncoder {
    * @return a newly created encoding context
    */
   public HFileBlockEncodingContext newDataBlockEncodingContext(
-      Algorithm compressionAlgorithm, DataBlockEncoding encoding,
+      Compression.Algorithm compressionAlgorithm,
+      Encryption.Context cryptoContext,
+      DataBlockEncoding encoding,
       byte[] headerBytes);
 
   /**
@@ -129,10 +134,13 @@ public interface DataBlockEncoder {
    *
    * @param compressionAlgorithm
    *          compression algorithm used if the data needs to be decompressed
+   * @param cryptoContext
+   *          decryption context
    * @return a newly created decoding context
    */
   public HFileBlockDecodingContext newDataBlockDecodingContext(
-      Algorithm compressionAlgorithm);
+      Compression.Algorithm compressionAlgorithm,
+      Encryption.Context cryptoContext);
 
   /**
    * An interface which enable to seek while underlying data is encoded.

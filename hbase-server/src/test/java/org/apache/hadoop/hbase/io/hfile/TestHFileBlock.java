@@ -201,7 +201,7 @@ public class TestHFileBlock {
   static HFileBlock.Writer createTestV2Block(Compression.Algorithm algo,
       boolean includesMemstoreTS) throws IOException {
     final BlockType blockType = BlockType.DATA;
-    HFileBlock.Writer hbw = new HFileBlock.Writer(algo, null,
+    HFileBlock.Writer hbw = new HFileBlock.Writer(algo, null, null,
         includesMemstoreTS, HFile.DEFAULT_CHECKSUM_TYPE,
         HFile.DEFAULT_BYTES_PER_CHECKSUM);
     DataOutputStream dos = hbw.startWriting(blockType);
@@ -273,7 +273,7 @@ public class TestHFileBlock {
         Path path = new Path(TEST_UTIL.getDataTestDir(), "blocks_v2_"
             + algo);
         FSDataOutputStream os = fs.create(path);
-        HFileBlock.Writer hbw = new HFileBlock.Writer(algo, null,
+        HFileBlock.Writer hbw = new HFileBlock.Writer(algo, null, null,
             includesMemstoreTS, HFile.DEFAULT_CHECKSUM_TYPE,
             HFile.DEFAULT_BYTES_PER_CHECKSUM);
         long totalSize = 0;
@@ -287,7 +287,7 @@ public class TestHFileBlock {
         os.close();
 
         FSDataInputStream is = fs.open(path);
-        HFileBlock.FSReader hbr = new HFileBlock.FSReaderV2(is, algo,
+        HFileBlock.FSReader hbr = new HFileBlock.FSReaderV2(is, algo, null,
             totalSize);
         HFileBlock b = hbr.readBlockData(0, -1, -1, pread);
         is.close();
@@ -301,7 +301,7 @@ public class TestHFileBlock {
 
         if (algo == GZ) {
           is = fs.open(path);
-          hbr = new HFileBlock.FSReaderV2(is, algo, totalSize);
+          hbr = new HFileBlock.FSReaderV2(is, algo, null, totalSize);
           b = hbr.readBlockData(0, 2173 + HConstants.HFILEBLOCK_HEADER_SIZE +
                                 b.totalChecksumBytes(), -1, pread);
           assertEquals(blockStr, b.toString());
@@ -339,7 +339,7 @@ public class TestHFileBlock {
           FSDataOutputStream os = fs.create(path);
           HFileDataBlockEncoder dataBlockEncoder =
               new HFileDataBlockEncoderImpl(encoding);
-          HFileBlock.Writer hbw = new HFileBlock.Writer(algo, dataBlockEncoder,
+          HFileBlock.Writer hbw = new HFileBlock.Writer(algo, null, dataBlockEncoder,
               includesMemstoreTS, HFile.DEFAULT_CHECKSUM_TYPE,
               HFile.DEFAULT_BYTES_PER_CHECKSUM);
           long totalSize = 0;
@@ -355,7 +355,7 @@ public class TestHFileBlock {
           os.close();
 
           FSDataInputStream is = fs.open(path);
-          HFileBlock.FSReaderV2 hbr = new HFileBlock.FSReaderV2(is, algo,
+          HFileBlock.FSReaderV2 hbr = new HFileBlock.FSReaderV2(is, algo, null,
               totalSize);
           hbr.setDataBlockEncoder(dataBlockEncoder);
           hbr.setIncludesMemstoreTS(includesMemstoreTS);
@@ -407,14 +407,14 @@ public class TestHFileBlock {
     byte[] encodedResultWithHeader = null;
     if (encoder != null) {
       HFileBlockEncodingContext encodingCtx =
-          encoder.newDataBlockEncodingContext(algo, encoding, dummyHeader);
+          encoder.newDataBlockEncodingContext(algo, null, encoding, dummyHeader);
       encoder.encodeKeyValues(rawBuf, includesMemstoreTS,
           encodingCtx);
       encodedResultWithHeader =
           encodingCtx.getUncompressedBytesWithHeader();
     } else {
       HFileBlockDefaultEncodingContext defaultEncodingCtx =
-        new HFileBlockDefaultEncodingContext(algo, encoding, dummyHeader);
+        new HFileBlockDefaultEncodingContext(algo, null, encoding, dummyHeader);
       byte[] rawBufWithHeader =
           new byte[rawBuf.array().length + headerLen];
       System.arraycopy(rawBuf.array(), 0, rawBufWithHeader,
@@ -491,7 +491,7 @@ public class TestHFileBlock {
               expectedPrevOffsets, expectedTypes, expectedContents);
 
           FSDataInputStream is = fs.open(path);
-          HFileBlock.FSReader hbr = new HFileBlock.FSReaderV2(is, algo,
+          HFileBlock.FSReader hbr = new HFileBlock.FSReaderV2(is, algo, null,
               totalSize);
           long curOffset = 0;
           for (int i = 0; i < NUM_TEST_BLOCKS; ++i) {
@@ -665,7 +665,7 @@ public class TestHFileBlock {
       writeBlocks(rand, compressAlgo, path, offsets, null, types, null);
       FSDataInputStream is = fs.open(path);
       long fileSize = fs.getFileStatus(path).getLen();
-      HFileBlock.FSReader hbr = new HFileBlock.FSReaderV2(is, compressAlgo,
+      HFileBlock.FSReader hbr = new HFileBlock.FSReaderV2(is, compressAlgo, null,
           fileSize);
 
       Executor exec = Executors.newFixedThreadPool(NUM_READER_THREADS);
@@ -697,7 +697,7 @@ public class TestHFileBlock {
   ) throws IOException {
     boolean cacheOnWrite = expectedContents != null;
     FSDataOutputStream os = fs.create(path);
-    HFileBlock.Writer hbw = new HFileBlock.Writer(compressAlgo, null,
+    HFileBlock.Writer hbw = new HFileBlock.Writer(compressAlgo, null, null,
         includesMemstoreTS, HFile.DEFAULT_CHECKSUM_TYPE,
         HFile.DEFAULT_BYTES_PER_CHECKSUM);
     Map<BlockType, Long> prevOffsetByType = new HashMap<BlockType, Long>();

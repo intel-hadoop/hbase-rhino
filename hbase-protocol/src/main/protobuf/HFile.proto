@@ -42,4 +42,5 @@ message FileTrailerProto {
   optional uint64 lastDataBlockOffset = 10;
   optional string comparatorClassName = 11;
   optional uint32 compressionCodec = 12;
+  optional uint64 encryptionBlockOffset = 13;
 }

@@ -113,7 +113,8 @@ public class TestHFileDataBlockEncoder {
     // usually we have just block without headers, but don't complicate that
     HFileBlock block = getSampleHFileBlock();
     HFileBlockEncodingContext context = new HFileBlockDefaultEncodingContext(
-        Compression.Algorithm.NONE, blockEncoder.getEncodingOnDisk(), HConstants.HFILEBLOCK_DUMMY_HEADER);
+        Compression.Algorithm.NONE, null, blockEncoder.getEncodingOnDisk(),
+        HConstants.HFILEBLOCK_DUMMY_HEADER);
     blockEncoder.beforeWriteToDisk(block.getBufferWithoutHeader(),
             includesMemstoreTS, context, block.getBlockType());
 

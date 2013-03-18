@@ -29,7 +29,6 @@ import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.io.compress.Compression;
-import org.apache.hadoop.hbase.io.compress.Compression.Algorithm;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.compress.Compressor;
 
@@ -62,9 +61,8 @@ public class EncodedDataBlock {
     Preconditions.checkNotNull(encoding,
         "Cannot create encoded data block with null encoder");
     this.dataBlockEncoder = dataBlockEncoder;
-    encodingCtx =
-        dataBlockEncoder.newDataBlockEncodingContext(Compression.Algorithm.NONE,
-            encoding, HConstants.HFILEBLOCK_DUMMY_HEADER);
+    encodingCtx = dataBlockEncoder.newDataBlockEncodingContext(
+      Compression.Algorithm.NONE, null, encoding, HConstants.HFILEBLOCK_DUMMY_HEADER);
     this.rawKVs = rawKVs;
   }
 
@@ -143,7 +141,7 @@ public class EncodedDataBlock {
    * @return Size of compressed data in bytes.
    * @throws IOException
    */
-  public static int getCompressedSize(Algorithm algo, Compressor compressor,
+  public static int getCompressedSize(Compression.Algorithm algo, Compressor compressor,
       byte[] inputBuffer, int offset, int length) throws IOException {
     DataOutputStream compressedStream = new DataOutputStream(
         new NullOutputStream());
@@ -167,7 +165,7 @@ public class EncodedDataBlock {
    *          algorithm
    * @return Size after second stage of compression.
    */
-  public int getEncodedCompressedSize(Algorithm comprAlgo,
+  public int getEncodedCompressedSize(Compression.Algorithm comprAlgo,
       Compressor compressor) throws IOException {
     byte[] compressedBytes = getEncodedData();
     return getCompressedSize(comprAlgo, compressor, compressedBytes, 0,

@@ -56,6 +56,7 @@ import org.apache.hadoop.hbase.KeyValue.KeyComparator;
 import org.apache.hadoop.hbase.exceptions.CorruptHFileException;
 import org.apache.hadoop.hbase.fs.HFileSystem;
 import org.apache.hadoop.hbase.io.compress.Compression;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
 import org.apache.hadoop.hbase.protobuf.ProtobufUtil;
 import org.apache.hadoop.hbase.protobuf.generated.HBaseProtos;
@@ -332,8 +333,8 @@ public class HFile {
     protected Path path;
     protected FSDataOutputStream ostream;
     protected int blockSize = HColumnDescriptor.DEFAULT_BLOCKSIZE;
-    protected Compression.Algorithm compression =
-        HFile.DEFAULT_COMPRESSION_ALGORITHM;
+    protected Compression.Algorithm compressAlgo = HFile.DEFAULT_COMPRESSION_ALGORITHM;
+    protected Encryption.Context cryptoContext;
     protected HFileDataBlockEncoder encoder = NoOpDataBlockEncoder.INSTANCE;
     protected KeyComparator comparator;
     protected ChecksumType checksumType = HFile.DEFAULT_CHECKSUM_TYPE;
@@ -363,15 +364,20 @@ public class HFile {
       return this;
     }
 
-    public WriterFactory withCompression(Compression.Algorithm compression) {
-      Preconditions.checkNotNull(compression);
-      this.compression = compression;
+    public WriterFactory withCompression(Compression.Algorithm compressAlgo) {
+      Preconditions.checkNotNull(compressAlgo);
+      this.compressAlgo = compressAlgo;
       return this;
     }
 
     public WriterFactory withCompression(String compressAlgo) {
-      Preconditions.checkNotNull(compression);
-      this.compression = AbstractHFileWriter.compressionByName(compressAlgo);
+      Preconditions.checkNotNull(compressAlgo);
+      this.compressAlgo = AbstractHFileWriter.compressionByName(compressAlgo);
+      return this;
+    }
+
+    public WriterFactory withEncryptionContext(Encryption.Context cryptoContext) {
+      this.cryptoContext = cryptoContext;
       return this;
     }
 
@@ -406,13 +412,13 @@ public class HFile {
       if (path != null) {
         ostream = AbstractHFileWriter.createOutputStream(conf, fs, path);
       }
-      return createWriter(fs, path, ostream, blockSize,
-          compression, encoder, comparator, checksumType, bytesPerChecksum);
+      return createWriter(fs, path, ostream, blockSize, compressAlgo, cryptoContext,
+        encoder, comparator, checksumType, bytesPerChecksum);
     }
 
     protected abstract Writer createWriter(FileSystem fs, Path path,
         FSDataOutputStream ostream, int blockSize,
-        Compression.Algorithm compress,
+        Compression.Algorithm compressAlgo, Encryption.Context cryptoContext,
         HFileDataBlockEncoder dataBlockEncoder,
         KeyComparator comparator, ChecksumType checksumType,
         int bytesPerChecksum) throws IOException;
@@ -505,6 +511,8 @@ public class HFile {
 
     Compression.Algorithm getCompressionAlgorithm();
 
+    Encryption.Context getCryptoContext();
+
     /**
      * Retrieves general Bloom filter metadata as appropriate for each
      * {@link HFile} version.
@@ -556,8 +564,7 @@ public class HFile {
     switch (trailer.getMajorVersion()) {
     case 2:
       return new HFileReaderV2(path, trailer, fsdis, fsdisNoFsChecksum,
-          size, closeIStream,
-          cacheConf, preferredEncodingInCache, hfs);
+          size, closeIStream, cacheConf, preferredEncodingInCache, hfs);
     default:
       throw new CorruptHFileException("Invalid HFile version " + trailer.getMajorVersion());
     }
@@ -568,12 +575,14 @@ public class HFile {
    * @param path Path to HFile
    * @param cacheConf Cache configuration for hfile's contents
    * @param preferredEncodingInCache Preferred in-cache data encoding algorithm.
+   * @param cryptoContext crypto context if using encryption
    * @return A version specific Hfile Reader
    * @throws IOException If file is invalid, will throw CorruptHFileException flavored IOException
    */
   public static Reader createReaderWithEncoding(
       FileSystem fs, Path path, CacheConfig cacheConf,
-      DataBlockEncoding preferredEncodingInCache) throws IOException {
+      DataBlockEncoding preferredEncodingInCache,
+      Encryption.Context cryptoContext) throws IOException {
     final boolean closeIStream = true;
     HFileSystem hfs = null;
     FSDataInputStream fsdis = fs.open(path);
@@ -604,14 +613,15 @@ public class HFile {
    * @param cacheConf Cache configuration for hfile's contents
    * @param preferredEncodingInCache Preferred in-cache data encoding algorithm.
    * @param closeIStream boolean for closing file after the getting the reader version.
+   * @param cryptoContext crypto context if using encryption
    * @return A version specific Hfile Reader
    * @throws IOException If file is invalid, will throw CorruptHFileException flavored IOException
    */
   public static Reader createReaderWithEncoding(
       FileSystem fs, Path path, FSDataInputStream fsdis,
       FSDataInputStream fsdisNoFsChecksum, long size, CacheConfig cacheConf,
-      DataBlockEncoding preferredEncodingInCache, boolean closeIStream)
-      throws IOException {
+      DataBlockEncoding preferredEncodingInCache, boolean closeIStream,
+      Encryption.Context cryptoContext) throws IOException {
     HFileSystem hfs = null;
 
     // If the fs is not an instance of HFileSystem, then create an
@@ -636,11 +646,10 @@ public class HFile {
    * @return an active Reader instance
    * @throws IOException Will throw a CorruptHFileException (DoNotRetryIOException subtype) if hfile is corrupt/invalid.
    */
-  public static Reader createReader(
-      FileSystem fs, Path path, CacheConfig cacheConf) throws IOException {
+  public static Reader createReader(FileSystem fs, Path path, CacheConfig cacheConf)
+      throws IOException {
     Preconditions.checkNotNull(cacheConf, "Cannot create Reader with null CacheConf");
-    return createReaderWithEncoding(fs, path, cacheConf,
-        DataBlockEncoding.NONE);
+    return createReaderWithEncoding(fs, path, cacheConf, DataBlockEncoding.NONE, null);
   }
 
   /**
@@ -876,6 +885,17 @@ public class HFile {
    */
   public static String[] getSupportedCompressionAlgorithms() {
     return Compression.getSupportedAlgorithms();
+  }
+
+  /**
+   * Get names of supported encryption algorithms. The names are acceptable by
+   * HFile.Writer.
+   *
+   * @return Array of strings, each represents a supported encryption
+   *         algorithm.
+   */
+  public static String[] getSupportedEncryptionAlgorithms() {
+    return Encryption.getSupportedAlgorithms();
   }
 
   // Utility methods.

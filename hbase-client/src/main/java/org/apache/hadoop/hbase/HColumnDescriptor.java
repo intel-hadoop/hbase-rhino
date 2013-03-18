@@ -21,21 +21,27 @@ package org.apache.hadoop.hbase;
 import com.google.common.base.Preconditions;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
+
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.exceptions.DeserializationException;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.io.compress.Compression;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
 import org.apache.hadoop.hbase.protobuf.ProtobufUtil;
 import org.apache.hadoop.hbase.protobuf.generated.HBaseProtos.BytesBytesPair;
 import org.apache.hadoop.hbase.protobuf.generated.HBaseProtos.ColumnFamilySchema;
 import org.apache.hadoop.hbase.protobuf.generated.HBaseProtos.NameStringPair;
 import org.apache.hadoop.hbase.regionserver.BloomType;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.WritableComparable;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
@@ -97,6 +103,9 @@ public class HColumnDescriptor implements WritableComparable<HColumnDescriptor> 
   public static final String REPLICATION_SCOPE = "REPLICATION_SCOPE";
   public static final String MIN_VERSIONS = "MIN_VERSIONS";
   public static final String KEEP_DELETED_CELLS = "KEEP_DELETED_CELLS";
+
+  public static final String CRYPTO = "CRYPTO";
+  public static final String CRYPTO_KEY = "CRYPTOKEY";
 
   /**
    * Default compression type.
@@ -214,6 +223,8 @@ public class HColumnDescriptor implements WritableComparable<HColumnDescriptor> 
       for (String s : DEFAULT_VALUES.keySet()) {
         RESERVED_KEYWORDS.add(new ImmutableBytesWritable(Bytes.toBytes(s)));
       }
+      RESERVED_KEYWORDS.add(new ImmutableBytesWritable(Bytes.toBytes(CRYPTO)));
+      RESERVED_KEYWORDS.add(new ImmutableBytesWritable(Bytes.toBytes(CRYPTO_KEY)));
   }
 
   private static final int UNINITIALIZED = -1;
@@ -1242,5 +1253,64 @@ public class HColumnDescriptor implements WritableComparable<HColumnDescriptor> 
    */
   public void removeConfiguration(final String key) {
     configuration.remove(key);
+  }
+
+  /**
+   * Return the encryption algorithm in use by this family
+   */
+  public Encryption.Algorithm getEncryptionType() {
+    String algorithm = getValue(CRYPTO);
+    if (algorithm != null) {
+      return Encryption.getEncryptionAlgorithmByName(algorithm);
+    }
+    return Encryption.Algorithm.NONE;
+  }
+
+  /**
+   * Set the encryption algorithm for use with this family
+   * @param algorithm
+   */
+  public void setEncryptionType(Encryption.Algorithm algorithm) {
+    setValue(CRYPTO, algorithm.getName());
+  }
+
+  /*
+   * Crypto attr format:
+   * +--------------------------+
+   * | 4 bytes plaintext length |
+   * +--------------------------+
+   * | encrypted data ...       |
+   * +--------------------------+
+   */
+
+  /** Return the crypto key attribute for the family, or null if not set  */
+  public byte[] getEncryptionKey(Configuration conf) throws IOException {
+    byte[] value = getValue(Bytes.toBytes(CRYPTO_KEY));
+    if (value == null) {
+      return null;
+    }
+    ByteArrayInputStream in = new ByteArrayInputStream(value);
+    byte[] plaintextLengthBytes = new byte[Bytes.SIZEOF_INT];
+    in.read(plaintextLengthBytes);
+    int plaintextLength = Bytes.toInt(plaintextLengthBytes);
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    Encryption.decryptWithSubjectKey(out, in, plaintextLength,
+      conf.get(HConstants.CRYPTO_MASTERKEY_NAME_CONF_KEY, User.getCurrent().getShortName()),
+      conf, Encryption.Algorithm.AES);
+    // Use it
+    return out.toByteArray();
+  }
+
+  /**
+   * Set the crypto key attribute for the family
+   * @throws IOException 
+   */
+  public void setEncryptionKey(Configuration conf, byte[] keyBytes) throws IOException {
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    out.write(Bytes.toBytes(keyBytes.length));
+    Encryption.encryptWithSubjectKey(out, new ByteArrayInputStream(keyBytes),
+      conf.get(HConstants.CRYPTO_MASTERKEY_NAME_CONF_KEY, User.getCurrent().getShortName()),
+      conf, Encryption.Algorithm.AES);
+    setValue(Bytes.toBytes(CRYPTO_KEY), out.toByteArray());
   }
 }

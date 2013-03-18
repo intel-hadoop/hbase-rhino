@@ -193,7 +193,7 @@ public class TestCompoundBloomFilter {
   private void readStoreFile(int t, BloomType bt, List<KeyValue> kvs,
       Path sfPath) throws IOException {
     StoreFile sf = new StoreFile(fs, sfPath, conf, cacheConf, bt,
-        NoOpDataBlockEncoder.INSTANCE);
+        NoOpDataBlockEncoder.INSTANCE, null);
     StoreFile.Reader r = sf.createReader();
     final boolean pread = true; // does not really matter
     StoreFileScanner scanner = r.getStoreFileScanner(true, pread);

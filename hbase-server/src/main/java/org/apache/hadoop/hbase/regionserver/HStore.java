@@ -58,6 +58,7 @@ import org.apache.hadoop.hbase.exceptions.WrongRegionException;
 import org.apache.hadoop.hbase.fs.HFileSystem;
 import org.apache.hadoop.hbase.io.HFileLink;
 import org.apache.hadoop.hbase.io.compress.Compression;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.hfile.CacheConfig;
 import org.apache.hadoop.hbase.io.hfile.HFile;
 import org.apache.hadoop.hbase.io.hfile.HFileDataBlockEncoder;
@@ -144,6 +145,7 @@ public class HStore implements Store {
 
   private final int blocksize;
   private HFileDataBlockEncoder dataBlockEncoder;
+  private Encryption.Context cryptoContext;
 
   /** Checksum configuration */
   private ChecksumType checksumType;
@@ -196,6 +198,20 @@ public class HStore implements Store {
     this.dataBlockEncoder =
         new HFileDataBlockEncoderImpl(family.getDataBlockEncodingOnDisk(),
             family.getDataBlockEncoding());
+
+    // Crypto context for new store files
+    byte[] cfCryptoKey = family.getEncryptionKey(conf);
+    if (cfCryptoKey != null) {
+      Encryption.Algorithm algorithm = family.getEncryptionType();
+      if (algorithm != Encryption.Algorithm.NONE) {
+        cryptoContext = Encryption.newContext(conf);
+        cryptoContext.setAlgorithm(algorithm);
+        cryptoContext.setKey(algorithm, cfCryptoKey);
+      } else {
+        LOG.warn("Schema for family '" + family.getNameAsString() +
+          "' contains a crypto key but no algorithm");
+      }
+    }
 
     this.comparator = info.getComparator();
     // Get TTL
@@ -445,7 +461,7 @@ public class HStore implements Store {
       completionService.submit(new Callable<StoreFile>() {
         public StoreFile call() throws IOException {
           StoreFile storeFile = new StoreFile(fs, p, conf, cacheConf,
-              family.getBloomFilterType(), dataBlockEncoder);
+              family.getBloomFilterType(), dataBlockEncoder, cryptoContext);
           storeFile.createReader();
           return storeFile;
         }
@@ -620,7 +636,7 @@ public class HStore implements Store {
     StoreFile.rename(fs, srcPath, dstPath);
 
     StoreFile sf = new StoreFile(fs, dstPath, this.conf, this.cacheConf,
-        this.family.getBloomFilterType(), this.dataBlockEncoder);
+        this.family.getBloomFilterType(), this.dataBlockEncoder, cryptoContext);
 
     StoreFile.Reader r = sf.createReader();
     this.storeSize += r.length();
@@ -903,7 +919,7 @@ public class HStore implements Store {
 
     status.setStatus("Flushing " + this + ": reopening flushed file");
     StoreFile sf = new StoreFile(this.fs, dstPath, this.conf, this.cacheConf,
-        this.family.getBloomFilterType(), this.dataBlockEncoder);
+        this.family.getBloomFilterType(), this.dataBlockEncoder, this.cryptoContext);
 
     StoreFile.Reader r = sf.createReader();
     this.storeSize += r.length();
@@ -953,6 +969,7 @@ public class HStore implements Store {
             .withChecksumType(checksumType)
             .withBytesPerChecksum(bytesPerChecksum)
             .withCompression(compression)
+            .withEncryptionContext(cryptoContext)
             .build();
     return w;
   }
@@ -1104,7 +1121,7 @@ public class HStore implements Store {
         for (Path newFile: newFiles) {
           // Create storefile around what we wrote with a reader on it.
           StoreFile sf = new StoreFile(this.fs, newFile, this.conf, this.cacheConf,
-            this.family.getBloomFilterType(), this.dataBlockEncoder);
+            this.family.getBloomFilterType(), this.dataBlockEncoder, this.cryptoContext);
           sf.createReader();
           sfs.add(sf);
         }
@@ -1161,7 +1178,7 @@ public class HStore implements Store {
       throw new IOException(err);
     }
     StoreFile result = new StoreFile(this.fs, destPath, this.conf, this.cacheConf,
-        this.family.getBloomFilterType(), this.dataBlockEncoder);
+        this.family.getBloomFilterType(), this.dataBlockEncoder, this.cryptoContext);
     result.createReader();
     return result;
   }
@@ -1364,7 +1381,7 @@ public class HStore implements Store {
     try {
       storeFile = new StoreFile(this.fs, path, this.conf,
           this.cacheConf, this.family.getBloomFilterType(),
-          NoOpDataBlockEncoder.INSTANCE);
+          NoOpDataBlockEncoder.INSTANCE, this.cryptoContext);
       storeFile.createReader();
     } catch (IOException e) {
       LOG.error("Failed to open store file : " + path
@@ -1891,7 +1908,7 @@ public class HStore implements Store {
   }
 
   public static final long FIXED_OVERHEAD =
-      ClassSize.align((19 * ClassSize.REFERENCE) + (4 * Bytes.SIZEOF_LONG)
+      ClassSize.align((20 * ClassSize.REFERENCE) + (4 * Bytes.SIZEOF_LONG)
               + (2 * Bytes.SIZEOF_INT) + Bytes.SIZEOF_BOOLEAN);
 
   public static final long DEEP_OVERHEAD = ClassSize.align(FIXED_OVERHEAD

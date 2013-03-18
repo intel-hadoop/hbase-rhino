@@ -34,6 +34,7 @@ import org.apache.hadoop.hbase.client.HBaseAdmin;
 import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.io.compress.Compression;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
 import org.apache.hadoop.hbase.protobuf.ProtobufUtil;
 import org.apache.hadoop.hbase.regionserver.BloomType;
@@ -83,6 +84,9 @@ public class LoadTestTool extends AbstractHBaseTool {
   private static final String OPT_USAGE_COMPRESSION = "Compression type, " +
       "one of " + Arrays.toString(Compression.Algorithm.values());
 
+  private static final String OPT_USAGE_ENCRYPTION = "Encryption type, " +
+      "one of " + Arrays.toString(Encryption.Algorithm.values());
+
   public static final String OPT_DATA_BLOCK_ENCODING_USAGE =
     "Encoding algorithm (e.g. prefix "
         + "compression) to use for data blocks in the test column family, "
@@ -94,6 +98,7 @@ public class LoadTestTool extends AbstractHBaseTool {
 
   private static final String OPT_BLOOM = "bloom";
   private static final String OPT_COMPRESSION = "compression";
+  private static final String OPT_ENCRYPTION = "encryption";
   public static final String OPT_DATA_BLOCK_ENCODING =
       HColumnDescriptor.DATA_BLOCK_ENCODING.toLowerCase();
   public static final String OPT_ENCODE_IN_CACHE_ONLY =
@@ -111,6 +116,7 @@ public class LoadTestTool extends AbstractHBaseTool {
   private static final String OPT_START_KEY = "start_key";
   private static final String OPT_TABLE_NAME = "tn";
   private static final String OPT_ZK_QUORUM = "zk";
+  private static final String OPT_ZK_QUORUM_PORT = "zk_port";
   private static final String OPT_SKIP_INIT = "skip_init";
   private static final String OPT_INIT_ONLY = "init_only";
 
@@ -130,6 +136,7 @@ public class LoadTestTool extends AbstractHBaseTool {
   private DataBlockEncoding dataBlockEncodingAlgo;
   private boolean encodeInCacheOnly;
   private Compression.Algorithm compressAlgo;
+  private Encryption.Algorithm cryptoAlgo;
   private BloomType bloomType;
 
   // Writer options
@@ -195,6 +202,13 @@ public class LoadTestTool extends AbstractHBaseTool {
       if (compressAlgo != null) {
         columnDesc.setCompressionType(compressAlgo);
       }
+      if (cryptoAlgo != null && cryptoAlgo != Encryption.Algorithm.NONE) {
+        Encryption.Context context = Encryption.newContext(conf);
+        context.setAlgorithm(cryptoAlgo);
+        context.setKey("123456");
+        columnDesc.setEncryptionType(cryptoAlgo);
+        columnDesc.setEncryptionKey(conf, context.getKeyBytes());
+      }
       if (dataBlockEncodingAlgo != null) {
         columnDesc.setDataBlockEncoding(dataBlockEncodingAlgo);
         columnDesc.setEncodeOnDisk(!encodeInCacheOnly);
@@ -213,12 +227,14 @@ public class LoadTestTool extends AbstractHBaseTool {
   protected void addOptions() {
     addOptWithArg(OPT_ZK_QUORUM, "ZK quorum as comma-separated host names " +
         "without port numbers");
+    addOptWithArg(OPT_ZK_QUORUM_PORT, "ZK client port");
     addOptWithArg(OPT_TABLE_NAME, "The name of the table to read or write");
     addOptWithArg(OPT_WRITE, OPT_USAGE_LOAD);
     addOptWithArg(OPT_READ, OPT_USAGE_READ);
     addOptNoArg(OPT_INIT_ONLY, "Initialize the test table only, don't do any loading");
     addOptWithArg(OPT_BLOOM, OPT_USAGE_BLOOM);
     addOptWithArg(OPT_COMPRESSION, OPT_USAGE_COMPRESSION);
+    addOptWithArg(OPT_ENCRYPTION, OPT_USAGE_ENCRYPTION);
     addOptWithArg(OPT_DATA_BLOCK_ENCODING, OPT_DATA_BLOCK_ENCODING_USAGE);
     addOptWithArg(OPT_MAX_READ_ERRORS, "The maximum number of read errors " +
         "to tolerate before terminating all reader threads. The default is " +
@@ -365,6 +381,10 @@ public class LoadTestTool extends AbstractHBaseTool {
     compressAlgo = compressStr == null ? Compression.Algorithm.NONE :
         Compression.Algorithm.valueOf(compressStr);
 
+    String cryptoStr = cmd.getOptionValue(OPT_ENCRYPTION);
+    cryptoAlgo = cryptoStr == null ? Encryption.Algorithm.NONE :
+        Encryption.Algorithm.valueOf(cryptoStr);
+
     String bloomStr = cmd.getOptionValue(OPT_BLOOM);
     bloomType = bloomStr == null ? null :
         BloomType.valueOf(bloomStr);
@@ -380,6 +400,10 @@ public class LoadTestTool extends AbstractHBaseTool {
   protected int doWork() throws IOException {
     if (cmd.hasOption(OPT_ZK_QUORUM)) {
       conf.set(HConstants.ZOOKEEPER_QUORUM, cmd.getOptionValue(OPT_ZK_QUORUM));
+    }
+
+    if (cmd.hasOption(OPT_ZK_QUORUM_PORT)) {
+      conf.set(HConstants.ZOOKEEPER_CLIENT_PORT, cmd.getOptionValue(OPT_ZK_QUORUM_PORT));
     }
 
     if (isInitOnly) {

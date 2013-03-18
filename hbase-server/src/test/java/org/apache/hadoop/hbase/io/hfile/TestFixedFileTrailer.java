@@ -51,7 +51,7 @@ public class TestFixedFileTrailer {
   private static final Log LOG = LogFactory.getLog(TestFixedFileTrailer.class);
 
   /** The number of used fields by version. Indexed by version minus one. */
-  private static final int[] NUM_FIELDS_BY_VERSION = new int[] { 9, 14 };
+  private static final int[] NUM_FIELDS_BY_VERSION = new int[] { 9, 15 };
 
   private HBaseTestingUtility util = new HBaseTestingUtility();
   private FileSystem fs;

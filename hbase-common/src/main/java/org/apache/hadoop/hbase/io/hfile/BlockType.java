@@ -76,6 +76,10 @@ public enum BlockType {
   /** Delete Family Bloom filter metadata, version 2 */
   DELETE_FAMILY_BLOOM_META("DFBLMET2", BlockCategory.BLOOM),
 
+  /** Encryption info, version 2. If encryption is enabled, only this block
+      and the trailer will be plaintext. */
+  ENCRYPTION_INFO_META("ENCRMET2", BlockCategory.META),
+
   // Trailer
 
   /** Fixed file trailer, both versions (always just a magic string) */

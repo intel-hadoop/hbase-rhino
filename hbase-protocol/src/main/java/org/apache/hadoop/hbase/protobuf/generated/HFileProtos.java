@@ -651,6 +651,10 @@ public final class HFileProtos {
     // optional uint32 compressionCodec = 12;
     boolean hasCompressionCodec();
     int getCompressionCodec();
+    
+    // optional uint64 encryptionBlockOffset = 13;
+    boolean hasEncryptionBlockOffset();
+    long getEncryptionBlockOffset();
   }
   public static final class FileTrailerProto extends
       com.google.protobuf.GeneratedMessage
@@ -823,6 +827,16 @@ public final class HFileProtos {
       return compressionCodec_;
     }
     
+    // optional uint64 encryptionBlockOffset = 13;
+    public static final int ENCRYPTIONBLOCKOFFSET_FIELD_NUMBER = 13;
+    private long encryptionBlockOffset_;
+    public boolean hasEncryptionBlockOffset() {
+      return ((bitField0_ & 0x00001000) == 0x00001000);
+    }
+    public long getEncryptionBlockOffset() {
+      return encryptionBlockOffset_;
+    }
+    
     private void initFields() {
       fileInfoOffset_ = 0L;
       loadOnOpenDataOffset_ = 0L;
@@ -836,6 +850,7 @@ public final class HFileProtos {
       lastDataBlockOffset_ = 0L;
       comparatorClassName_ = "";
       compressionCodec_ = 0;
+      encryptionBlockOffset_ = 0L;
     }
     private byte memoizedIsInitialized = -1;
     public final boolean isInitialized() {
@@ -884,6 +899,9 @@ public final class HFileProtos {
       }
       if (((bitField0_ & 0x00000800) == 0x00000800)) {
         output.writeUInt32(12, compressionCodec_);
+      }
+      if (((bitField0_ & 0x00001000) == 0x00001000)) {
+        output.writeUInt64(13, encryptionBlockOffset_);
       }
       getUnknownFields().writeTo(output);
     }
@@ -941,6 +959,10 @@ public final class HFileProtos {
       if (((bitField0_ & 0x00000800) == 0x00000800)) {
         size += com.google.protobuf.CodedOutputStream
           .computeUInt32Size(12, compressionCodec_);
+      }
+      if (((bitField0_ & 0x00001000) == 0x00001000)) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeUInt64Size(13, encryptionBlockOffset_);
       }
       size += getUnknownFields().getSerializedSize();
       memoizedSerializedSize = size;
@@ -1025,6 +1047,11 @@ public final class HFileProtos {
         result = result && (getCompressionCodec()
             == other.getCompressionCodec());
       }
+      result = result && (hasEncryptionBlockOffset() == other.hasEncryptionBlockOffset());
+      if (hasEncryptionBlockOffset()) {
+        result = result && (getEncryptionBlockOffset()
+            == other.getEncryptionBlockOffset());
+      }
       result = result &&
           getUnknownFields().equals(other.getUnknownFields());
       return result;
@@ -1081,6 +1108,10 @@ public final class HFileProtos {
       if (hasCompressionCodec()) {
         hash = (37 * hash) + COMPRESSIONCODEC_FIELD_NUMBER;
         hash = (53 * hash) + getCompressionCodec();
+      }
+      if (hasEncryptionBlockOffset()) {
+        hash = (37 * hash) + ENCRYPTIONBLOCKOFFSET_FIELD_NUMBER;
+        hash = (53 * hash) + hashLong(getEncryptionBlockOffset());
       }
       hash = (29 * hash) + getUnknownFields().hashCode();
       return hash;
@@ -1222,6 +1253,8 @@ public final class HFileProtos {
         bitField0_ = (bitField0_ & ~0x00000400);
         compressionCodec_ = 0;
         bitField0_ = (bitField0_ & ~0x00000800);
+        encryptionBlockOffset_ = 0L;
+        bitField0_ = (bitField0_ & ~0x00001000);
         return this;
       }
       
@@ -1308,6 +1341,10 @@ public final class HFileProtos {
           to_bitField0_ |= 0x00000800;
         }
         result.compressionCodec_ = compressionCodec_;
+        if (((from_bitField0_ & 0x00001000) == 0x00001000)) {
+          to_bitField0_ |= 0x00001000;
+        }
+        result.encryptionBlockOffset_ = encryptionBlockOffset_;
         result.bitField0_ = to_bitField0_;
         onBuilt();
         return result;
@@ -1359,6 +1396,9 @@ public final class HFileProtos {
         }
         if (other.hasCompressionCodec()) {
           setCompressionCodec(other.getCompressionCodec());
+        }
+        if (other.hasEncryptionBlockOffset()) {
+          setEncryptionBlockOffset(other.getEncryptionBlockOffset());
         }
         this.mergeUnknownFields(other.getUnknownFields());
         return this;
@@ -1449,6 +1489,11 @@ public final class HFileProtos {
             case 96: {
               bitField0_ |= 0x00000800;
               compressionCodec_ = input.readUInt32();
+              break;
+            }
+            case 104: {
+              bitField0_ |= 0x00001000;
+              encryptionBlockOffset_ = input.readUInt64();
               break;
             }
           }
@@ -1724,6 +1769,27 @@ public final class HFileProtos {
         return this;
       }
       
+      // optional uint64 encryptionBlockOffset = 13;
+      private long encryptionBlockOffset_ ;
+      public boolean hasEncryptionBlockOffset() {
+        return ((bitField0_ & 0x00001000) == 0x00001000);
+      }
+      public long getEncryptionBlockOffset() {
+        return encryptionBlockOffset_;
+      }
+      public Builder setEncryptionBlockOffset(long value) {
+        bitField0_ |= 0x00001000;
+        encryptionBlockOffset_ = value;
+        onChanged();
+        return this;
+      }
+      public Builder clearEncryptionBlockOffset() {
+        bitField0_ = (bitField0_ & ~0x00001000);
+        encryptionBlockOffset_ = 0L;
+        onChanged();
+        return this;
+      }
+      
       // @@protoc_insertion_point(builder_scope:FileTrailerProto)
     }
     
@@ -1755,7 +1821,7 @@ public final class HFileProtos {
   static {
     java.lang.String[] descriptorData = {
       "\n\013HFile.proto\032\013hbase.proto\"2\n\rFileInfoPr" +
-      "oto\022!\n\010mapEntry\030\001 \003(\0132\017.BytesBytesPair\"\335" +
+      "oto\022!\n\010mapEntry\030\001 \003(\0132\017.BytesBytesPair\"\374" +
       "\002\n\020FileTrailerProto\022\026\n\016fileInfoOffset\030\001 " +
       "\001(\004\022\034\n\024loadOnOpenDataOffset\030\002 \001(\004\022!\n\031unc" +
       "ompressedDataIndexSize\030\003 \001(\004\022\036\n\026totalUnc" +
@@ -1764,9 +1830,10 @@ public final class HFileProtos {
       "nt\030\007 \001(\004\022\032\n\022numDataIndexLevels\030\010 \001(\r\022\034\n\024" +
       "firstDataBlockOffset\030\t \001(\004\022\033\n\023lastDataBl" +
       "ockOffset\030\n \001(\004\022\033\n\023comparatorClassName\030\013",
-      " \001(\t\022\030\n\020compressionCodec\030\014 \001(\rBA\n*org.ap" +
-      "ache.hadoop.hbase.protobuf.generatedB\013HF" +
-      "ileProtosH\001\210\001\001\240\001\001"
+      " \001(\t\022\030\n\020compressionCodec\030\014 \001(\r\022\035\n\025encryp" +
+      "tionBlockOffset\030\r \001(\004BA\n*org.apache.hado" +
+      "op.hbase.protobuf.generatedB\013HFileProtos" +
+      "H\001\210\001\001\240\001\001"
     };
     com.google.protobuf.Descriptors.FileDescriptor.InternalDescriptorAssigner assigner =
       new com.google.protobuf.Descriptors.FileDescriptor.InternalDescriptorAssigner() {
@@ -1786,7 +1853,7 @@ public final class HFileProtos {
           internal_static_FileTrailerProto_fieldAccessorTable = new
             com.google.protobuf.GeneratedMessage.FieldAccessorTable(
               internal_static_FileTrailerProto_descriptor,
-              new java.lang.String[] { "FileInfoOffset", "LoadOnOpenDataOffset", "UncompressedDataIndexSize", "TotalUncompressedBytes", "DataIndexCount", "MetaIndexCount", "EntryCount", "NumDataIndexLevels", "FirstDataBlockOffset", "LastDataBlockOffset", "ComparatorClassName", "CompressionCodec", },
+              new java.lang.String[] { "FileInfoOffset", "LoadOnOpenDataOffset", "UncompressedDataIndexSize", "TotalUncompressedBytes", "DataIndexCount", "MetaIndexCount", "EntryCount", "NumDataIndexLevels", "FirstDataBlockOffset", "LastDataBlockOffset", "ComparatorClassName", "CompressionCodec", "EncryptionBlockOffset", },
               org.apache.hadoop.hbase.protobuf.generated.HFileProtos.FileTrailerProto.class,
               org.apache.hadoop.hbase.protobuf.generated.HFileProtos.FileTrailerProto.Builder.class);
           return null;

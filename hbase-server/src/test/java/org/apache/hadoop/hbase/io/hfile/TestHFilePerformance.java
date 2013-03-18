@@ -32,6 +32,7 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.MediumTests;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.io.BytesWritable;
 import org.apache.hadoop.io.SequenceFile;
 import org.apache.hadoop.io.compress.CompressionCodec;
@@ -62,6 +63,7 @@ public class TestHFilePerformance extends TestCase {
     conf = new Configuration();
     fs = FileSystem.get(conf);
     formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+    Encryption.injectProviderForTesting();
   }
 
   public void startTime() {
@@ -134,6 +136,7 @@ public class TestHFilePerformance extends TestCase {
    * @param keyLength
    * @param valueLength
    * @param codecName "none", "lzo", "gz", "snappy"
+   * @param cryptoName "none", "aes"
    * @param rows number of rows to be written.
    * @param writeMethod used for HFile only.
    * @param minBlockSize used for HFile only.
@@ -141,12 +144,23 @@ public class TestHFilePerformance extends TestCase {
    */
    //TODO writeMethod: implement multiple ways of writing e.g. A) known length (no chunk) B) using a buffer and streaming (for many chunks).
   public void timeWrite(String fileType, int keyLength, int valueLength,
-    String codecName, long rows, String writeMethod, int minBlockSize)
+    String codecName, String cryptoName, long rows, String writeMethod, int minBlockSize)
   throws IOException {
-    System.out.println("File Type: " + fileType);
-    System.out.println("Writing " + fileType + " with codecName: " + codecName);
-    long totalBytesWritten = 0;
+    Encryption.Context cryptoContext = null;
+    if (cryptoName != "none") {
+      Encryption.Algorithm algorithm = Encryption.getEncryptionAlgorithmByName(cryptoName);
+      cryptoContext = Encryption.newContext(conf);
+      cryptoContext.setAlgorithm(algorithm);
+      cryptoContext.setKey("123456");
+      if (Encryption.getEncryptionCodec(cryptoContext) == null) {
+        throw new RuntimeException("Cannot load crypto codec " + algorithm.getName());
+      }
+    }
 
+    System.out.println("File Type: " + fileType);
+    System.out.println("Writing " + fileType + " with codecName: " + codecName +
+      " cryptoName: " + cryptoName);
+    long totalBytesWritten = 0;
 
     //Using separate randomizer for key/value with seeds matching Sequence File.
     byte[] key = new byte[keyLength];
@@ -160,13 +174,15 @@ public class TestHFilePerformance extends TestCase {
     FSDataOutputStream fout =  createFSOutput(path);
 
     if ("HFile".equals(fileType)){
-        System.out.println("HFile write method: ");
-        HFile.Writer writer = HFile.getWriterFactoryNoCache(conf)
+        HFile.WriterFactory factory = HFile.getWriterFactoryNoCache(conf)
             .withOutputStream(fout)
             .withBlockSize(minBlockSize)
-            .withCompression(codecName)
-            .create();
-
+            .withCompression(codecName);
+        if (cryptoContext != null) {
+          factory.withEncryptionContext(cryptoContext);
+        }
+        HFile.Writer writer = factory.create();
+        System.out.println("HFile write method: ");
         // Writing value in one shot.
         for (long l=0; l<rows; l++ ) {
           generator.getKey(key);
@@ -319,7 +335,7 @@ public class TestHFilePerformance extends TestCase {
 
     System.out.println("****************************** Sequence File *****************************");
 
-    timeWrite("SequenceFile", keyLength, valueLength, "none", rows, null, minBlockSize);
+    timeWrite("SequenceFile", keyLength, valueLength, "none", "none", rows, null, minBlockSize);
     System.out.println("\n+++++++\n");
     timeReading("SequenceFile", keyLength, valueLength, rows, -1);
 
@@ -328,7 +344,7 @@ public class TestHFilePerformance extends TestCase {
     System.out.println("");
 
     /* DISABLED LZO
-    timeWrite("SequenceFile", keyLength, valueLength, "lzo", rows, null, minBlockSize);
+    timeWrite("SequenceFile", keyLength, valueLength, "lzo", "none", rows, null, minBlockSize);
     System.out.println("\n+++++++\n");
     timeReading("SequenceFile", keyLength, valueLength, rows, -1);
 
@@ -339,7 +355,7 @@ public class TestHFilePerformance extends TestCase {
     /* Sequence file can only use native hadoop libs gzipping so commenting out.
      */
     try {
-      timeWrite("SequenceFile", keyLength, valueLength, "gz", rows, null,
+      timeWrite("SequenceFile", keyLength, valueLength, "gz", "none", rows, null,
         minBlockSize);
       System.out.println("\n+++++++\n");
       timeReading("SequenceFile", keyLength, valueLength, rows, -1);
@@ -351,7 +367,7 @@ public class TestHFilePerformance extends TestCase {
     System.out.println("\n\n\n");
     System.out.println("****************************** HFile *****************************");
 
-    timeWrite("HFile", keyLength, valueLength, "none", rows, null, minBlockSize);
+    timeWrite("HFile", keyLength, valueLength, "none", "none", rows, null, minBlockSize);
     System.out.println("\n+++++++\n");
     timeReading("HFile", keyLength, valueLength, rows, 0 );
 
@@ -371,9 +387,29 @@ public class TestHFilePerformance extends TestCase {
     System.out.println("----------------------");
     System.out.println("");
 */
-    timeWrite("HFile", keyLength, valueLength, "gz", rows, null, minBlockSize);
+    timeWrite("HFile", keyLength, valueLength, "gz", "none", rows, null, minBlockSize);
     System.out.println("\n+++++++\n");
     timeReading("HFile", keyLength, valueLength, rows, 0 );
+
+    // With encryption
+    // timeWrite may throw a RuntimeException if a codec cannot be loaded, we
+    // just ignore these
+    try {
+      System.out.println("");
+      System.out.println("----------------------");
+      System.out.println("");
+      timeWrite("HFile", keyLength, valueLength, "none", "aes", rows, null, minBlockSize);
+      System.out.println("\n+++++++\n");
+      timeReading("HFile", keyLength, valueLength, rows, 0 );
+      System.out.println("");
+      System.out.println("----------------------");
+      System.out.println("");
+      timeWrite("HFile", keyLength, valueLength, "gz", "aes", rows, null, minBlockSize);
+      System.out.println("\n+++++++\n");
+      timeReading("HFile", keyLength, valueLength, rows, 0 );
+    } catch (RuntimeException e) {
+      // ignore
+    }
 
     System.out.println("\n\n\n\nNotes: ");
     System.out.println(" * Timing includes open/closing of files.");

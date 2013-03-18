@@ -818,6 +818,19 @@ public final class HConstants {
    * e.g. via Bytes.toBytes(Boolean) */
   public static final String OP_ATTRIBUTE_ACL_REPLACE = "acl.replace";
 
+  /** Configuration key for the crypto key provider, a class name */
+  public static final String CRYPTO_KEYPROVIDER_CONF_KEY = "hbase.crypto.keyprovider";
+
+  /** Configuration key for the crypto key provider parameters, a URL with encoded parameters */
+  public static final String CRYPTO_KEYPROVIDER_PARAMETERS_KEY =
+    "hbase.crypto.keyprovider.parameters";
+
+  /** Configuration key for the name of the master key for the cluster, a string */
+  public static final String CRYPTO_MASTERKEY_NAME_CONF_KEY = "hbase.crypto.master.key.name";
+
+  /** Configuration key for enabling HLog encryption, a boolean */
+  public static final String ENABLE_WAL_ENCRYPTION = "hbase.regionserver.wal.encryption";
+
   private HConstants() {
     // Can't be instantiated with this ctor.
   }

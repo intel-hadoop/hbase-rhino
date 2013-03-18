@@ -51,6 +51,8 @@ import org.apache.hadoop.hbase.io.HFileLink;
 import org.apache.hadoop.hbase.io.HalfStoreFileReader;
 import org.apache.hadoop.hbase.io.Reference;
 import org.apache.hadoop.hbase.io.compress.Compression;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
+import org.apache.hadoop.hbase.io.crypto.Encryption.Context;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
 import org.apache.hadoop.hbase.io.hfile.BlockType;
 import org.apache.hadoop.hbase.io.hfile.CacheConfig;
@@ -156,6 +158,9 @@ public class StoreFile {
   // Set when we obtain a Reader.
   private long maxMemstoreTS = -1;
 
+  // Encryption context, can be null
+  private Encryption.Context cryptoContext;
+
   public long getMaxMemstoreTS() {
     return maxMemstoreTS;
   }
@@ -237,7 +242,8 @@ public class StoreFile {
             final Configuration conf,
             final CacheConfig cacheConf,
             final BloomType cfBloomType,
-            final HFileDataBlockEncoder dataBlockEncoder)
+            final HFileDataBlockEncoder dataBlockEncoder,
+            final Encryption.Context cryptoContext)
       throws IOException {
     this.fs = fs;
     this.path = p;
@@ -245,6 +251,7 @@ public class StoreFile {
     this.dataBlockEncoder =
         dataBlockEncoder == null ? NoOpDataBlockEncoder.INSTANCE
             : dataBlockEncoder;
+    this.cryptoContext = cryptoContext;
 
     if (HFileLink.isHFileLink(p)) {
       this.link = new HFileLink(conf, p);
@@ -518,18 +525,18 @@ public class StoreFile {
     if (isReference()) {
       if (this.link != null) {
         this.reader = new HalfStoreFileReader(this.fs, this.referencePath, this.link,
-          this.cacheConf, this.reference, dataBlockEncoder.getEncodingInCache());
+          this.cacheConf, this.reference, dataBlockEncoder.getEncodingInCache(), cryptoContext);
       } else {
         this.reader = new HalfStoreFileReader(this.fs, this.referencePath,
-          this.cacheConf, this.reference, dataBlockEncoder.getEncodingInCache());
+          this.cacheConf, this.reference, dataBlockEncoder.getEncodingInCache(), cryptoContext);
       }
     } else if (isLink()) {
       long size = link.getFileStatus(fs).getLen();
       this.reader = new Reader(this.fs, this.path, link, size, this.cacheConf,
-          dataBlockEncoder.getEncodingInCache(), true);
+          dataBlockEncoder.getEncodingInCache(), true, cryptoContext);
     } else {
       this.reader = new Reader(this.fs, this.path, this.cacheConf,
-          dataBlockEncoder.getEncodingInCache());
+          dataBlockEncoder.getEncodingInCache(), cryptoContext);
     }
 
     computeHDFSBlockDistribution();
@@ -736,6 +743,7 @@ public class StoreFile {
     private Path filePath;
     private ChecksumType checksumType = HFile.DEFAULT_CHECKSUM_TYPE;
     private int bytesPerChecksum = HFile.DEFAULT_BYTES_PER_CHECKSUM;
+    private Encryption.Context cryptoContext = null;
 
     public WriterBuilder(Configuration conf, CacheConfig cacheConf,
         FileSystem fs, int blockSize) {
@@ -820,6 +828,11 @@ public class StoreFile {
       return this;
     }
 
+    public WriterBuilder withEncryptionContext(Context cryptoContext) {
+      this.cryptoContext = cryptoContext;
+      return this;
+    }
+
     /**
      * Create a store file writer. Client is responsible for closing file when
      * done. If metadata, add BEFORE closing using
@@ -854,7 +867,7 @@ public class StoreFile {
       }
       return new Writer(fs, filePath, blockSize, compressAlgo, dataBlockEncoder,
           conf, cacheConf, comparator, bloomType, maxKeyCount, checksumType,
-          bytesPerChecksum);
+          bytesPerChecksum, cryptoContext);
     }
   }
 
@@ -1038,8 +1051,8 @@ public class StoreFile {
         HFileDataBlockEncoder dataBlockEncoder, final Configuration conf,
         CacheConfig cacheConf,
         final KVComparator comparator, BloomType bloomType, long maxKeys,
-        final ChecksumType checksumType, final int bytesPerChecksum)
-        throws IOException {
+        final ChecksumType checksumType, final int bytesPerChecksum,
+        final Encryption.Context cryptoContext) throws IOException {
       this.dataBlockEncoder = dataBlockEncoder != null ?
           dataBlockEncoder : NoOpDataBlockEncoder.INSTANCE;
       writer = HFile.getWriterFactory(conf, cacheConf)
@@ -1050,6 +1063,7 @@ public class StoreFile {
           .withComparator(comparator.getRawComparator())
           .withChecksumType(checksumType)
           .withBytesPerChecksum(bytesPerChecksum)
+          .withEncryptionContext(cryptoContext)
           .create();
 
       this.kvComparator = comparator;
@@ -1330,15 +1344,16 @@ public class StoreFile {
     private long deleteFamilyCnt = -1;
 
     public Reader(FileSystem fs, Path path, CacheConfig cacheConf,
-        DataBlockEncoding preferredEncodingInCache) throws IOException {
+        DataBlockEncoding preferredEncodingInCache, Encryption.Context cryptoContext)
+        throws IOException {
       reader = HFile.createReaderWithEncoding(fs, path, cacheConf,
-          preferredEncodingInCache);
+          preferredEncodingInCache, cryptoContext);
       bloomFilterType = BloomType.NONE;
     }
 
     public Reader(FileSystem fs, Path path, HFileLink hfileLink, long size,
         CacheConfig cacheConf, DataBlockEncoding preferredEncodingInCache,
-        boolean closeIStream) throws IOException {
+        boolean closeIStream, Encryption.Context cryptoContext) throws IOException {
 
       FSDataInputStream in = hfileLink.open(fs);
       FSDataInputStream inNoChecksum = in;
@@ -1348,7 +1363,7 @@ public class StoreFile {
       }
 
       reader = HFile.createReaderWithEncoding(fs, path, in, inNoChecksum,
-                  size, cacheConf, preferredEncodingInCache, closeIStream);
+                  size, cacheConf, preferredEncodingInCache, closeIStream, cryptoContext);
       bloomFilterType = BloomType.NONE;
     }
 

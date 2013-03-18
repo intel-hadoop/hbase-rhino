@@ -21,7 +21,8 @@ import java.nio.ByteBuffer;
 
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.hbase.HConstants;
-import org.apache.hadoop.hbase.io.compress.Compression.Algorithm;
+import org.apache.hadoop.hbase.io.compress.Compression;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoder;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
 import org.apache.hadoop.hbase.io.encoding.HFileBlockDefaultDecodingContext;
@@ -78,13 +79,12 @@ public class HFileDataBlockEncoderImpl implements HFileDataBlockEncoder {
         inCache : DataBlockEncoding.NONE;
     if (inCache != DataBlockEncoding.NONE) {
       inCacheEncodeCtx =
-          this.inCache.getEncoder().newDataBlockEncodingContext(
-              Algorithm.NONE, this.inCache, dummyHeader);
+        this.inCache.getEncoder().newDataBlockEncodingContext(Compression.Algorithm.NONE,
+          null, this.inCache, dummyHeader);
     } else {
       // create a default encoding context
-      inCacheEncodeCtx =
-          new HFileBlockDefaultEncodingContext(Algorithm.NONE,
-              this.inCache, dummyHeader);
+      inCacheEncodeCtx = new HFileBlockDefaultEncodingContext(Compression.Algorithm.NONE,
+        null, this.inCache, dummyHeader);
     }
 
     Preconditions.checkArgument(onDisk == DataBlockEncoding.NONE ||
@@ -255,29 +255,28 @@ public class HFileDataBlockEncoderImpl implements HFileDataBlockEncoder {
 
   @Override
   public HFileBlockEncodingContext newOnDiskDataBlockEncodingContext(
-      Algorithm compressionAlgorithm,  byte[] dummyHeader) {
+      Compression.Algorithm compressionAlgorithm, Encryption.Context cryptoContext,
+      byte[] dummyHeader) {
     if (onDisk != null) {
       DataBlockEncoder encoder = onDisk.getEncoder();
       if (encoder != null) {
-        return encoder.newDataBlockEncodingContext(
-            compressionAlgorithm, onDisk, dummyHeader);
+        return encoder.newDataBlockEncodingContext(compressionAlgorithm, cryptoContext,
+          onDisk, dummyHeader);
       }
     }
-    return new HFileBlockDefaultEncodingContext(compressionAlgorithm,
-        null, dummyHeader);
+    return new HFileBlockDefaultEncodingContext(compressionAlgorithm, cryptoContext,
+      null, dummyHeader);
   }
 
   @Override
   public HFileBlockDecodingContext newOnDiskDataBlockDecodingContext(
-      Algorithm compressionAlgorithm) {
+      Compression.Algorithm compressionAlgorithm, Encryption.Context cryptoContext) {
     if (onDisk != null) {
       DataBlockEncoder encoder = onDisk.getEncoder();
       if (encoder != null) {
-        return encoder.newDataBlockDecodingContext(
-            compressionAlgorithm);
+        return encoder.newDataBlockDecodingContext(compressionAlgorithm, cryptoContext);
       }
     }
-    return new HFileBlockDefaultDecodingContext(compressionAlgorithm);
+    return new HFileBlockDefaultDecodingContext(compressionAlgorithm, cryptoContext);
   }
-
 }

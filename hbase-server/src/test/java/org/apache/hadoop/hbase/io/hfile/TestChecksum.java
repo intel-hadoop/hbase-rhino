@@ -38,7 +38,8 @@ import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.SmallTests;
 import org.apache.hadoop.hbase.fs.HFileSystem;
 import org.apache.hadoop.hbase.io.compress.Compression;
-import org.apache.hadoop.hbase.io.compress.Compression.Algorithm;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
+import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.ChecksumType;
 
 import static org.apache.hadoop.hbase.io.compress.Compression.Algorithm.*;
@@ -85,9 +86,8 @@ public class TestChecksum {
         Path path = new Path(TEST_UTIL.getDataTestDir(), "blocks_v2_"
             + algo);
         FSDataOutputStream os = fs.create(path);
-        HFileBlock.Writer hbw = new HFileBlock.Writer(algo, null,
-            true, HFile.DEFAULT_CHECKSUM_TYPE,
-            HFile.DEFAULT_BYTES_PER_CHECKSUM);
+        HFileBlock.Writer hbw = new HFileBlock.Writer(algo, null, null, true,
+          HFile.DEFAULT_CHECKSUM_TYPE, HFile.DEFAULT_BYTES_PER_CHECKSUM);
         long totalSize = 0;
         for (int blockId = 0; blockId < 2; ++blockId) {
           DataOutputStream dos = hbw.startWriting(BlockType.DATA);
@@ -103,8 +103,8 @@ public class TestChecksum {
 
         // Do a read that purposely introduces checksum verification failures.
         FSDataInputStream is = fs.open(path);
-        HFileBlock.FSReader hbr = new FSReaderV2Test(is, algo,
-            totalSize, HFile.MAX_FORMAT_VERSION, fs, path);
+        HFileBlock.FSReader hbr = new FSReaderV2Test(is, algo, null, totalSize,
+          HFile.MAX_FORMAT_VERSION, fs, path);
         HFileBlock b = hbr.readBlockData(0, -1, -1, pread);
         b.sanityCheck();
         assertEquals(4936, b.getUncompressedSizeWithoutHeader());
@@ -146,8 +146,8 @@ public class TestChecksum {
         HFileSystem newfs = new HFileSystem(TEST_UTIL.getConfiguration(), false);
         assertEquals(false, newfs.useHBaseChecksum());
         is = newfs.open(path);
-        hbr = new FSReaderV2Test(is, algo,
-            totalSize, HFile.MAX_FORMAT_VERSION, newfs, path);
+        hbr = new FSReaderV2Test(is, algo, null, totalSize, HFile.MAX_FORMAT_VERSION, newfs,
+          path);
         b = hbr.readBlockData(0, -1, -1, pread);
         is.close();
         b.sanityCheck();
@@ -178,8 +178,8 @@ public class TestChecksum {
         Path path = new Path(TEST_UTIL.getDataTestDir(), "checksumChunk_" + 
                              algo + bytesPerChecksum);
         FSDataOutputStream os = fs.create(path);
-        HFileBlock.Writer hbw = new HFileBlock.Writer(algo, null,
-          true, HFile.DEFAULT_CHECKSUM_TYPE, bytesPerChecksum);
+        HFileBlock.Writer hbw = new HFileBlock.Writer(algo, null, null, true,
+          HFile.DEFAULT_CHECKSUM_TYPE, bytesPerChecksum);
 
         // write one block. The block has data
         // that is at least 6 times more than the checksum chunk size
@@ -210,8 +210,8 @@ public class TestChecksum {
         // Read data back from file.
         FSDataInputStream is = fs.open(path);
         FSDataInputStream nochecksum = hfs.getNoChecksumFs().open(path);
-        HFileBlock.FSReader hbr = new HFileBlock.FSReaderV2(is, nochecksum, 
-            algo, totalSize, HFile.MAX_FORMAT_VERSION, hfs, path);
+        HFileBlock.FSReader hbr = new HFileBlock.FSReaderV2(is, nochecksum, algo, null,
+          totalSize, HFile.MAX_FORMAT_VERSION, hfs, path);
         HFileBlock b = hbr.readBlockData(0, -1, -1, pread);
         is.close();
         b.sanityCheck();
@@ -258,11 +258,11 @@ public class TestChecksum {
    */
   static private class FSReaderV2Test extends HFileBlock.FSReaderV2 {
 
-    FSReaderV2Test(FSDataInputStream istream, Algorithm algo,
-                   long fileSize, int minorVersion, FileSystem fs,
-                   Path path) throws IOException {
-      super(istream, istream, algo, fileSize, minorVersion, 
-            (HFileSystem)fs, path);
+    FSReaderV2Test(FSDataInputStream istream, Compression.Algorithm compressAlgo,
+        Encryption.Context cryptoContext, long fileSize, int minorVersion,
+        FileSystem fs, Path path) throws IOException {
+      super(istream, istream, compressAlgo, cryptoContext, fileSize, minorVersion,
+        (HFileSystem)fs, path);
     }
 
     @Override
