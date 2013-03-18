@@ -31,19 +31,11 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.SequenceFile;
+import org.apache.hadoop.io.crypto.CryptoContext;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.security.User;
-import org.apache.hadoop.io.SequenceFile;
-
-// XXX: TODO
-// SequenceFiles with crypto codecs need to be initialized in the reader
-// constructor, so this introduces a compatability problem. One solution is to
-// have WALReader delegate to a SequenceFile.Reader instead, and use 
-// factory/builder in hadoop-compat to get an instance of SequenceFile.Reader.
-// This makes sense in general as Hadoop 2 introduces a SF.Reader constructor
-// that takes arbitrary options and these constructors are deprecated.
-import org.apache.hadoop.io.crypto.CryptoContext;
 
 @InterfaceAudience.Private
 public class SequenceFileLogReader implements HLog.Reader {

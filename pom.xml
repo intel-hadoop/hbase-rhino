@@ -1732,6 +1732,18 @@
         </plugins>
       </build>
     </profile>
+    <!--
+      Profile for building against a crypto enabled Hadoop. Activate using:
+       mvn -Dcrypto
+    -->
+    <profile>
+      <id>crypto</id>
+      <activation>
+        <property>
+          <name>crypto</name>
+        </property>
+      </activation>
+    </profile>
   </profiles>
   <!-- See http://jira.codehaus.org/browse/MSITE-443 why the settings need to be here and not in pluginManagement. -->
   <reporting>
