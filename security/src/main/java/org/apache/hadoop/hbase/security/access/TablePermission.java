@@ -45,6 +45,18 @@ public class TablePermission extends Permission {
     super();
   }
 
+ /**
+   * Create a new permission for any table.
+   * <p>
+   * Normally you will create TablePermissions for a given table and (optionally)
+   * column family. Use one of the other constructors. This constructor is a
+   * shortcut when creating cell level permissions, where the table, column
+   * family, and column qualifier are implicit in the location of the cell.
+   */
+  public TablePermission(Action... assigned) {
+    this(null, null, null, assigned);
+  }
+
   /**
    * Create a new permission for the given table and (optionally) column family,
    * allowing the given actions.
