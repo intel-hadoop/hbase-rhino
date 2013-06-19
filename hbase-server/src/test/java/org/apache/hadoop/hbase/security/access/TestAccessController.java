@@ -27,6 +27,7 @@ import java.io.IOException;
 import java.lang.reflect.UndeclaredThrowableException;
 import java.security.PrivilegedActionException;
 import java.security.PrivilegedExceptionAction;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
@@ -78,6 +79,7 @@ import org.apache.hadoop.hbase.regionserver.RegionCoprocessorHost;
 import org.apache.hadoop.hbase.regionserver.RegionServerCoprocessorHost;
 import org.apache.hadoop.hbase.regionserver.ScanType;
 import org.apache.hadoop.hbase.exceptions.AccessDeniedException;
+import org.apache.hadoop.hbase.security.SecureTestUtil;
 import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.security.access.AccessControlLists;
 import org.apache.hadoop.hbase.security.access.Permission;
@@ -126,6 +128,7 @@ public class TestAccessController {
   private static byte[] TEST_TABLE = Bytes.toBytes("testtable");
   private static byte[] TEST_TABLE2 = Bytes.toBytes("testtable2");
   private static byte[] TEST_FAMILY = Bytes.toBytes("f1");
+  private static byte[] TEST_ROW = Bytes.toBytes("r1");
 
   private static MasterCoprocessorEnvironment CP_ENV;
   private static AccessController ACCESS_CONTROLLER;
@@ -142,6 +145,10 @@ public class TestAccessController {
     conf.set("hbase.master.logcleaner.plugins",
       "org.apache.hadoop.hbase.master.snapshot.SnapshotLogCleaner");
     SecureTestUtil.enableSecurity(conf);
+    
+    // enable TRACE logging for AccessController
+    org.apache.log4j.Logger.getLogger("SecurityLogger."+AccessController.class.getName())
+      .setLevel(org.apache.log4j.Level.TRACE);
 
     TEST_UTIL.startMiniCluster();
     MasterCoprocessorHost cpHost = TEST_UTIL.getMiniHBaseCluster().getMaster().getCoprocessorHost();
@@ -225,27 +232,51 @@ public class TestAccessController {
     assertEquals(0, AccessControlLists.getTablePermissions(conf, TEST_TABLE).size());
   }
 
-  public void verifyAllowed(User user, PrivilegedExceptionAction... actions) throws Exception {
-    for (PrivilegedExceptionAction action : actions) {
+  /**
+   * An AccessTestAction performs an action that will be examined to confirm
+   * the results conform to expected access rights.
+   * <p>
+   * To indicate an action was allowed, return null or a non empty list of
+   * KeyValues.
+   * <p>
+   * To indicate the action was not allowed, either throw an AccessDeniedException
+   * or return an empty list of KeyValues.
+   */
+  static interface AccessTestAction extends PrivilegedExceptionAction<Object> { }
+
+  public void verifyAllowed(User user, AccessTestAction... actions) throws Exception {
+    for (AccessTestAction action : actions) {
       try {
-        user.runAs(action);
+        Object obj = user.runAs(action);
+        if (obj != null && obj instanceof List<?>) {
+          List<?> results = (List<?>) obj;
+          if (results != null && results.isEmpty()) {
+            fail("Empty non null results from action for user '" +
+                user.getShortName() + "'");
+          }
+        }
       } catch (AccessDeniedException ade) {
         fail("Expected action to pass for user '" + user.getShortName() + "' but was denied");
       }
     }
   }
 
-  public void verifyAllowed(PrivilegedExceptionAction action, User... users) throws Exception {
+  public void verifyAllowed(AccessTestAction action, User... users) throws Exception {
     for (User user : users) {
       verifyAllowed(user, action);
     }
   }
 
-  public void verifyDenied(User user, PrivilegedExceptionAction... actions) throws Exception {
-    for (PrivilegedExceptionAction action : actions) {
+  public void verifyDenied(User user, AccessTestAction... actions) throws Exception {
+    for (AccessTestAction action : actions) {
       try {
-        user.runAs(action);
-        fail("Expected AccessDeniedException for user '" + user.getShortName() + "'");
+        Object obj = user.runAs(action);
+        if (obj != null && obj instanceof List<?>) {
+          List<?> results = (List<?>) obj;
+          if (results != null && !results.isEmpty()) {
+            fail("Expected no results for user '" + user.getShortName() + "'");
+          }
+        }
       } catch (IOException e) {
         boolean isAccessDeniedException = false;
         if(e instanceof RetriesExhaustedWithDetailsException) {
@@ -291,7 +322,7 @@ public class TestAccessController {
     }
   }
 
-  public void verifyDenied(PrivilegedExceptionAction action, User... users) throws Exception {
+  public void verifyDenied(AccessTestAction action, User... users) throws Exception {
     for (User user : users) {
       verifyDenied(user, action);
     }
@@ -299,7 +330,7 @@ public class TestAccessController {
 
   @Test
   public void testTableCreate() throws Exception {
-    PrivilegedExceptionAction createTable = new PrivilegedExceptionAction() {
+    AccessTestAction createTable = new AccessTestAction() {
       public Object run() throws Exception {
         HTableDescriptor htd = new HTableDescriptor("testnewtable");
         htd.addFamily(new HColumnDescriptor(TEST_FAMILY));
@@ -317,7 +348,7 @@ public class TestAccessController {
 
   @Test
   public void testTableModify() throws Exception {
-    PrivilegedExceptionAction modifyTable = new PrivilegedExceptionAction() {
+    AccessTestAction modifyTable = new AccessTestAction() {
       public Object run() throws Exception {
         HTableDescriptor htd = new HTableDescriptor(TEST_TABLE);
         htd.addFamily(new HColumnDescriptor(TEST_FAMILY));
@@ -334,7 +365,7 @@ public class TestAccessController {
 
   @Test
   public void testTableDelete() throws Exception {
-    PrivilegedExceptionAction deleteTable = new PrivilegedExceptionAction() {
+    AccessTestAction deleteTable = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER
             .preDeleteTable(ObserverContext.createAndPrepare(CP_ENV, null), TEST_TABLE);
@@ -349,7 +380,7 @@ public class TestAccessController {
   @Test
   public void testAddColumn() throws Exception {
     final HColumnDescriptor hcd = new HColumnDescriptor("fam_new");
-    PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
+    AccessTestAction action = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preAddColumn(ObserverContext.createAndPrepare(CP_ENV, null), TEST_TABLE,
           hcd);
@@ -365,7 +396,7 @@ public class TestAccessController {
   public void testModifyColumn() throws Exception {
     final HColumnDescriptor hcd = new HColumnDescriptor(TEST_FAMILY);
     hcd.setMaxVersions(10);
-    PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
+    AccessTestAction action = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preModifyColumn(ObserverContext.createAndPrepare(CP_ENV, null),
           TEST_TABLE, hcd);
@@ -379,7 +410,7 @@ public class TestAccessController {
 
   @Test
   public void testDeleteColumn() throws Exception {
-    PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
+    AccessTestAction action = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preDeleteColumn(ObserverContext.createAndPrepare(CP_ENV, null),
           TEST_TABLE, TEST_FAMILY);
@@ -393,7 +424,7 @@ public class TestAccessController {
 
   @Test
   public void testTableDisable() throws Exception {
-    PrivilegedExceptionAction disableTable = new PrivilegedExceptionAction() {
+    AccessTestAction disableTable = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preDisableTable(ObserverContext.createAndPrepare(CP_ENV, null),
           TEST_TABLE);
@@ -401,7 +432,7 @@ public class TestAccessController {
       }
     };
 
-    PrivilegedExceptionAction disableAclTable = new PrivilegedExceptionAction() {
+    AccessTestAction disableAclTable = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preDisableTable(ObserverContext.createAndPrepare(CP_ENV, null),
             AccessControlLists.ACL_TABLE_NAME);
@@ -418,7 +449,7 @@ public class TestAccessController {
 
   @Test
   public void testTableEnable() throws Exception {
-    PrivilegedExceptionAction enableTable = new PrivilegedExceptionAction() {
+    AccessTestAction enableTable = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER
             .preEnableTable(ObserverContext.createAndPrepare(CP_ENV, null), TEST_TABLE);
@@ -441,7 +472,7 @@ public class TestAccessController {
     }
     final Map.Entry<HRegionInfo, ServerName> firstRegion = regions.entrySet().iterator().next();
     final ServerName server = TEST_UTIL.getHBaseCluster().getRegionServer(0).getServerName();
-    PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
+    AccessTestAction action = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preMove(ObserverContext.createAndPrepare(CP_ENV, null),
           firstRegion.getKey(), server, server);
@@ -464,7 +495,7 @@ public class TestAccessController {
     }
     final Map.Entry<HRegionInfo, ServerName> firstRegion = regions.entrySet().iterator().next();
 
-    PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
+    AccessTestAction action = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preAssign(ObserverContext.createAndPrepare(CP_ENV, null),
           firstRegion.getKey());
@@ -487,7 +518,7 @@ public class TestAccessController {
     }
     final Map.Entry<HRegionInfo, ServerName> firstRegion = regions.entrySet().iterator().next();
 
-    PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
+    AccessTestAction action = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preUnassign(ObserverContext.createAndPrepare(CP_ENV, null),
           firstRegion.getKey(), false);
@@ -510,7 +541,7 @@ public class TestAccessController {
     }
     final Map.Entry<HRegionInfo, ServerName> firstRegion = regions.entrySet().iterator().next();
 
-    PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
+    AccessTestAction action = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preRegionOffline(ObserverContext.createAndPrepare(CP_ENV, null),
           firstRegion.getKey());
@@ -524,7 +555,7 @@ public class TestAccessController {
 
   @Test
   public void testBalance() throws Exception {
-    PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
+    AccessTestAction action = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preBalance(ObserverContext.createAndPrepare(CP_ENV, null));
         return null;
@@ -537,7 +568,7 @@ public class TestAccessController {
 
   @Test
   public void testBalanceSwitch() throws Exception {
-    PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
+    AccessTestAction action = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preBalanceSwitch(ObserverContext.createAndPrepare(CP_ENV, null), true);
         return null;
@@ -550,7 +581,7 @@ public class TestAccessController {
 
   @Test
   public void testShutdown() throws Exception {
-    PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
+    AccessTestAction action = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preShutdown(ObserverContext.createAndPrepare(CP_ENV, null));
         return null;
@@ -563,7 +594,7 @@ public class TestAccessController {
 
   @Test
   public void testStopMaster() throws Exception {
-    PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
+    AccessTestAction action = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preStopMaster(ObserverContext.createAndPrepare(CP_ENV, null));
         return null;
@@ -574,14 +605,14 @@ public class TestAccessController {
     verifyDenied(action, USER_CREATE, USER_OWNER, USER_RW, USER_RO, USER_NONE);
   }
 
-  private void verifyWrite(PrivilegedExceptionAction action) throws Exception {
+  private void verifyWrite(AccessTestAction action) throws Exception {
     verifyAllowed(action, SUPERUSER, USER_ADMIN, USER_OWNER, USER_RW);
     verifyDenied(action, USER_NONE, USER_CREATE, USER_RO);
   }
 
   @Test
   public void testSplit() throws Exception {
-    PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
+    AccessTestAction action = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preSplit(ObserverContext.createAndPrepare(RCP_ENV, null));
         return null;
@@ -594,7 +625,7 @@ public class TestAccessController {
 
   @Test
   public void testSplitWithSplitRow() throws Exception {
-    PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
+    AccessTestAction action = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preSplit(
             ObserverContext.createAndPrepare(RCP_ENV, null),
@@ -607,10 +638,9 @@ public class TestAccessController {
     verifyDenied(action, USER_CREATE, USER_RW, USER_RO, USER_NONE);
   }
 
-  
   @Test
   public void testFlush() throws Exception {
-    PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
+    AccessTestAction action = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preFlush(ObserverContext.createAndPrepare(RCP_ENV, null));
         return null;
@@ -623,7 +653,7 @@ public class TestAccessController {
 
   @Test
   public void testCompact() throws Exception {
-    PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
+    AccessTestAction action = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preCompact(ObserverContext.createAndPrepare(RCP_ENV, null), null, null,
           ScanType.COMPACT_RETAIN_DELETES);
@@ -637,7 +667,7 @@ public class TestAccessController {
 
   @Test
   public void testPreCompactSelection() throws Exception {
-    PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
+    AccessTestAction action = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preCompactSelection(ObserverContext.createAndPrepare(RCP_ENV, null), null, null);
         return null;
@@ -648,37 +678,49 @@ public class TestAccessController {
     verifyDenied(action, USER_CREATE, USER_RW, USER_RO, USER_NONE);
   }
 
-  private void verifyRead(PrivilegedExceptionAction action) throws Exception {
+  private void verifyRead(AccessTestAction action) throws Exception {
     verifyAllowed(action, SUPERUSER, USER_ADMIN, USER_OWNER, USER_RW, USER_RO);
     verifyDenied(action, USER_NONE, USER_CREATE);
   }
 
-  private void verifyReadWrite(PrivilegedExceptionAction action) throws Exception {
+  private void verifyReadWrite(AccessTestAction action) throws Exception {
     verifyAllowed(action, SUPERUSER, USER_ADMIN, USER_OWNER, USER_RW);
     verifyDenied(action, USER_NONE, USER_CREATE, USER_RO);
   }
 
   @Test
   public void testRead() throws Exception {
-    // get action
-    PrivilegedExceptionAction getAction = new PrivilegedExceptionAction() {
+    // Store some data
+    AccessTestAction putAction = new AccessTestAction() {
       public Object run() throws Exception {
-        Get g = new Get(Bytes.toBytes("random_row"));
+        Put put = new Put(TEST_ROW);
+        put.add(TEST_FAMILY, Bytes.toBytes("q"), Bytes.toBytes("value"));
+        HTable t = new HTable(conf, TEST_TABLE);
+        t.put(put);
+        return null;
+      }
+    };
+    verifyAllowed(putAction, USER_OWNER);
+
+    // get action
+    AccessTestAction getAction = new AccessTestAction() {
+      public Object run() throws Exception {
+        Get g = new Get(TEST_ROW);
         g.addFamily(TEST_FAMILY);
         HTable t = new HTable(conf, TEST_TABLE);
         try {
-          t.get(g);
+          return t.get(g).list();
         } finally {
           t.close();
         }
-        return null;
       }
     };
     verifyRead(getAction);
 
     // action for scanning
-    PrivilegedExceptionAction scanAction = new PrivilegedExceptionAction() {
+    AccessTestAction scanAction = new AccessTestAction() {
       public Object run() throws Exception {
+        List<KeyValue> result = new ArrayList<KeyValue>();
         Scan s = new Scan();
         s.addFamily(TEST_FAMILY);
 
@@ -687,7 +729,7 @@ public class TestAccessController {
           ResultScanner scanner = table.getScanner(s);
           try {
             for (Result r = scanner.next(); r != null; r = scanner.next()) {
-              // do nothing
+              result.addAll(r.list());
             }
           } catch (IOException e) {
           } finally {
@@ -696,7 +738,7 @@ public class TestAccessController {
         } finally {
           table.close();
         }
-        return null;
+        return result;
       }
     };
     verifyRead(scanAction);
@@ -706,7 +748,7 @@ public class TestAccessController {
   // test put, delete, increment
   public void testWrite() throws Exception {
     // put action
-    PrivilegedExceptionAction putAction = new PrivilegedExceptionAction() {
+    AccessTestAction putAction = new AccessTestAction() {
       public Object run() throws Exception {
         Put p = new Put(Bytes.toBytes("random_row"));
         p.add(TEST_FAMILY, Bytes.toBytes("Qualifier"), Bytes.toBytes(1));
@@ -722,7 +764,7 @@ public class TestAccessController {
     verifyWrite(putAction);
 
     // delete action
-    PrivilegedExceptionAction deleteAction = new PrivilegedExceptionAction() {
+    AccessTestAction deleteAction = new AccessTestAction() {
       public Object run() throws Exception {
         Delete d = new Delete(Bytes.toBytes("random_row"));
         d.deleteFamily(TEST_FAMILY);
@@ -738,7 +780,7 @@ public class TestAccessController {
     verifyWrite(deleteAction);
 
     // increment action
-    PrivilegedExceptionAction incrementAction = new PrivilegedExceptionAction() {
+    AccessTestAction incrementAction = new AccessTestAction() {
       public Object run() throws Exception {
         Increment inc = new Increment(Bytes.toBytes("random_row"));
         inc.addColumn(TEST_FAMILY, Bytes.toBytes("Qualifier"), 1);
@@ -757,7 +799,7 @@ public class TestAccessController {
   @Test
   public void testReadWrite() throws Exception {
     // action for checkAndDelete
-    PrivilegedExceptionAction checkAndDeleteAction = new PrivilegedExceptionAction() {
+    AccessTestAction checkAndDeleteAction = new AccessTestAction() {
       public Object run() throws Exception {
         Delete d = new Delete(Bytes.toBytes("random_row"));
         d.deleteFamily(TEST_FAMILY);
@@ -773,8 +815,7 @@ public class TestAccessController {
     };
     verifyReadWrite(checkAndDeleteAction);
 
-    // action for checkAndPut()
-    PrivilegedExceptionAction checkAndPut = new PrivilegedExceptionAction() {
+    AccessTestAction checkAndPut = new AccessTestAction() {
       public Object run() throws Exception {
         Put p = new Put(Bytes.toBytes("random_row"));
         p.add(TEST_FAMILY, Bytes.toBytes("Qualifier"), Bytes.toBytes(1));
@@ -800,7 +841,7 @@ public class TestAccessController {
     //so users creating HFiles have write permissions
     fs.setPermission(dir, FsPermission.valueOf("-rwxrwxrwx"));
 
-    PrivilegedExceptionAction bulkLoadAction = new PrivilegedExceptionAction() {
+    AccessTestAction bulkLoadAction = new AccessTestAction() {
       public Object run() throws Exception {
         int numRows = 3;
 
@@ -900,7 +941,7 @@ public class TestAccessController {
   @Test
   public void testAppend() throws Exception {
 
-    PrivilegedExceptionAction appendAction = new PrivilegedExceptionAction() {
+    AccessTestAction appendAction = new AccessTestAction() {
       public Object run() throws Exception {
         byte[] row = Bytes.toBytes("random_row");
         byte[] qualifier = Bytes.toBytes("q");
@@ -921,66 +962,6 @@ public class TestAccessController {
 
     verifyAllowed(appendAction, SUPERUSER, USER_ADMIN, USER_OWNER, USER_RW);
     verifyDenied(appendAction, USER_CREATE, USER_RO, USER_NONE);
-  }
-
-  @Test
-  public void testGrantRevoke() throws Exception {
-
-    PrivilegedExceptionAction grantAction = new PrivilegedExceptionAction() {
-      public Object run() throws Exception {
-        HTable acl = new HTable(conf, AccessControlLists.ACL_TABLE_NAME);
-        try {
-          BlockingRpcChannel service = acl.coprocessorService(TEST_TABLE);
-          AccessControlService.BlockingInterface protocol =
-            AccessControlService.newBlockingStub(service);
-          ProtobufUtil.grant(protocol, USER_RO.getShortName(), TEST_TABLE,
-            TEST_FAMILY, null, Action.READ);
-        } finally {
-          acl.close();
-        }
-        return null;
-      }
-    };
-
-    PrivilegedExceptionAction revokeAction = new PrivilegedExceptionAction() {
-      public Object run() throws Exception {
-        HTable acl = new HTable(conf, AccessControlLists.ACL_TABLE_NAME);
-        try {
-          BlockingRpcChannel service = acl.coprocessorService(TEST_TABLE);
-          AccessControlService.BlockingInterface protocol =
-            AccessControlService.newBlockingStub(service);
-          ProtobufUtil.revoke(protocol, USER_RO.getShortName(), TEST_TABLE,
-            TEST_FAMILY, null, Action.READ);
-        } finally {
-          acl.close();
-        }
-        return null;
-      }
-    };
-
-    PrivilegedExceptionAction getPermissionsAction = new PrivilegedExceptionAction() {
-      public Object run() throws Exception {
-        HTable acl = new HTable(conf, AccessControlLists.ACL_TABLE_NAME);
-        try {
-          BlockingRpcChannel service = acl.coprocessorService(TEST_TABLE);
-          AccessControlService.BlockingInterface protocol =
-            AccessControlService.newBlockingStub(service);
-          ProtobufUtil.getUserPermissions(protocol, TEST_TABLE);
-        } finally {
-          acl.close();
-        }
-        return null;
-      }
-    };
-
-    verifyAllowed(grantAction, SUPERUSER, USER_ADMIN, USER_OWNER);
-    verifyDenied(grantAction, USER_CREATE, USER_RW, USER_RO, USER_NONE);
-
-    verifyAllowed(revokeAction, SUPERUSER, USER_ADMIN, USER_OWNER);
-    verifyDenied(revokeAction, USER_CREATE, USER_RW, USER_RO, USER_NONE);
-
-    verifyAllowed(getPermissionsAction, SUPERUSER, USER_ADMIN, USER_OWNER);
-    verifyDenied(getPermissionsAction, USER_CREATE, USER_RW, USER_RO, USER_NONE);
   }
 
   @Test
@@ -1008,7 +989,7 @@ public class TestAccessController {
         .createUserForTesting(TEST_UTIL.getConfiguration(), "gbluser", new String[0]);
 
     // prepare actions:
-    PrivilegedExceptionAction putActionAll = new PrivilegedExceptionAction() {
+    AccessTestAction putActionAll = new AccessTestAction() {
       public Object run() throws Exception {
         Put p = new Put(Bytes.toBytes("a"));
         p.add(family1, qualifier, Bytes.toBytes("v1"));
@@ -1022,7 +1003,7 @@ public class TestAccessController {
         return null;
       }
     };
-    PrivilegedExceptionAction putAction1 = new PrivilegedExceptionAction() {
+    AccessTestAction putAction1 = new AccessTestAction() {
       public Object run() throws Exception {
         Put p = new Put(Bytes.toBytes("a"));
         p.add(family1, qualifier, Bytes.toBytes("v1"));
@@ -1035,7 +1016,7 @@ public class TestAccessController {
         return null;
       }
     };
-    PrivilegedExceptionAction putAction2 = new PrivilegedExceptionAction() {
+    AccessTestAction putAction2 = new AccessTestAction() {
       public Object run() throws Exception {
         Put p = new Put(Bytes.toBytes("a"));
         p.add(family2, qualifier, Bytes.toBytes("v2"));
@@ -1048,7 +1029,7 @@ public class TestAccessController {
         return null;
       }
     };
-    PrivilegedExceptionAction getActionAll = new PrivilegedExceptionAction() {
+    AccessTestAction getActionAll = new AccessTestAction() {
       public Object run() throws Exception {
         Get g = new Get(Bytes.toBytes("random_row"));
         g.addFamily(family1);
@@ -1062,7 +1043,7 @@ public class TestAccessController {
         return null;
       }
     };
-    PrivilegedExceptionAction getAction1 = new PrivilegedExceptionAction() {
+    AccessTestAction getAction1 = new AccessTestAction() {
       public Object run() throws Exception {
         Get g = new Get(Bytes.toBytes("random_row"));
         g.addFamily(family1);
@@ -1075,7 +1056,7 @@ public class TestAccessController {
         return null;
       }
     };
-    PrivilegedExceptionAction getAction2 = new PrivilegedExceptionAction() {
+    AccessTestAction getAction2 = new AccessTestAction() {
       public Object run() throws Exception {
         Get g = new Get(Bytes.toBytes("random_row"));
         g.addFamily(family2);
@@ -1088,7 +1069,7 @@ public class TestAccessController {
         return null;
       }
     };
-    PrivilegedExceptionAction deleteActionAll = new PrivilegedExceptionAction() {
+    AccessTestAction deleteActionAll = new AccessTestAction() {
       public Object run() throws Exception {
         Delete d = new Delete(Bytes.toBytes("random_row"));
         d.deleteFamily(family1);
@@ -1102,7 +1083,7 @@ public class TestAccessController {
         return null;
       }
     };
-    PrivilegedExceptionAction deleteAction1 = new PrivilegedExceptionAction() {
+    AccessTestAction deleteAction1 = new AccessTestAction() {
       public Object run() throws Exception {
         Delete d = new Delete(Bytes.toBytes("random_row"));
         d.deleteFamily(family1);
@@ -1115,7 +1096,7 @@ public class TestAccessController {
         return null;
       }
     };
-    PrivilegedExceptionAction deleteAction2 = new PrivilegedExceptionAction() {
+    AccessTestAction deleteAction2 = new AccessTestAction() {
       public Object run() throws Exception {
         Delete d = new Delete(Bytes.toBytes("random_row"));
         d.deleteFamily(family2);
@@ -1318,7 +1299,7 @@ public class TestAccessController {
     // create temp users
     User user = User.createUserForTesting(TEST_UTIL.getConfiguration(), "user", new String[0]);
 
-    PrivilegedExceptionAction getQualifierAction = new PrivilegedExceptionAction() {
+    AccessTestAction getQualifierAction = new AccessTestAction() {
       public Object run() throws Exception {
         Get g = new Get(Bytes.toBytes("random_row"));
         g.addColumn(family1, qualifier);
@@ -1331,7 +1312,7 @@ public class TestAccessController {
         return null;
       }
     };
-    PrivilegedExceptionAction putQualifierAction = new PrivilegedExceptionAction() {
+    AccessTestAction putQualifierAction = new AccessTestAction() {
       public Object run() throws Exception {
         Put p = new Put(Bytes.toBytes("random_row"));
         p.add(family1, qualifier, Bytes.toBytes("v1"));
@@ -1344,7 +1325,7 @@ public class TestAccessController {
         return null;
       }
     };
-    PrivilegedExceptionAction deleteQualifierAction = new PrivilegedExceptionAction() {
+    AccessTestAction deleteQualifierAction = new AccessTestAction() {
       public Object run() throws Exception {
         Delete d = new Delete(Bytes.toBytes("random_row"));
         d.deleteColumn(family1, qualifier);
@@ -1599,7 +1580,7 @@ public class TestAccessController {
   }
 
   /** global operations */
-  private void verifyGlobal(PrivilegedExceptionAction<?> action) throws Exception {
+  private void verifyGlobal(AccessTestAction action) throws Exception {
     verifyAllowed(action, SUPERUSER);
 
     verifyDenied(action, USER_CREATE, USER_RW, USER_NONE, USER_RO);
@@ -1663,9 +1644,9 @@ public class TestAccessController {
   public void testCheckPermissions() throws Exception {
     // --------------------------------------
     // test global permissions
-    PrivilegedExceptionAction<Void> globalAdmin = new PrivilegedExceptionAction<Void>() {
+    AccessTestAction globalAdmin = new AccessTestAction() {
       @Override
-      public Void run() throws Exception {
+      public Object run() throws Exception {
         checkGlobalPerms(Permission.Action.ADMIN);
         return null;
       }
@@ -1675,9 +1656,9 @@ public class TestAccessController {
 
     // --------------------------------------
     // test multiple permissions
-    PrivilegedExceptionAction<Void> globalReadWrite = new PrivilegedExceptionAction<Void>() {
+    AccessTestAction globalReadWrite = new AccessTestAction() {
       @Override
-      public Void run() throws Exception {
+      public Object run() throws Exception {
         checkGlobalPerms(Permission.Action.READ, Permission.Action.WRITE);
         return null;
       }
@@ -1709,33 +1690,33 @@ public class TestAccessController {
       acl.close();
     }
 
-    PrivilegedExceptionAction<Void> tableRead = new PrivilegedExceptionAction<Void>() {
+    AccessTestAction tableRead = new AccessTestAction() {
       @Override
-      public Void run() throws Exception {
+      public Object run() throws Exception {
         checkTablePerms(TEST_TABLE, null, null, Permission.Action.READ);
         return null;
       }
     };
 
-    PrivilegedExceptionAction<Void> columnRead = new PrivilegedExceptionAction<Void>() {
+    AccessTestAction columnRead = new AccessTestAction() {
       @Override
-      public Void run() throws Exception {
+      public Object run() throws Exception {
         checkTablePerms(TEST_TABLE, TEST_FAMILY, null, Permission.Action.READ);
         return null;
       }
     };
 
-    PrivilegedExceptionAction<Void> qualifierRead = new PrivilegedExceptionAction<Void>() {
+    AccessTestAction qualifierRead = new AccessTestAction() {
       @Override
-      public Void run() throws Exception {
+      public Object run() throws Exception {
         checkTablePerms(TEST_TABLE, TEST_FAMILY, TEST_Q1, Permission.Action.READ);
         return null;
       }
     };
 
-    PrivilegedExceptionAction<Void> multiQualifierRead = new PrivilegedExceptionAction<Void>() {
+    AccessTestAction multiQualifierRead = new AccessTestAction() {
       @Override
-      public Void run() throws Exception {
+      public Object run() throws Exception {
         checkTablePerms(TEST_TABLE, new Permission[] {
             new TablePermission(TEST_TABLE, TEST_FAMILY, TEST_Q1, Permission.Action.READ),
             new TablePermission(TEST_TABLE, TEST_FAMILY, TEST_Q2, Permission.Action.READ), });
@@ -1743,18 +1724,18 @@ public class TestAccessController {
       }
     };
 
-    PrivilegedExceptionAction<Void> globalAndTableRead = new PrivilegedExceptionAction<Void>() {
+    AccessTestAction globalAndTableRead = new AccessTestAction() {
       @Override
-      public Void run() throws Exception {
+      public Object run() throws Exception {
         checkTablePerms(TEST_TABLE, new Permission[] { new Permission(Permission.Action.READ),
             new TablePermission(TEST_TABLE, null, (byte[]) null, Permission.Action.READ), });
         return null;
       }
     };
 
-    PrivilegedExceptionAction<Void> noCheck = new PrivilegedExceptionAction<Void>() {
+    AccessTestAction noCheck = new AccessTestAction() {
       @Override
-      public Void run() throws Exception {
+      public Object run() throws Exception {
         checkTablePerms(TEST_TABLE, new Permission[0]);
         return null;
       }
@@ -1778,9 +1759,9 @@ public class TestAccessController {
 
     // --------------------------------------
     // test family level multiple permissions
-    PrivilegedExceptionAction<Void> familyReadWrite = new PrivilegedExceptionAction<Void>() {
+    AccessTestAction familyReadWrite = new AccessTestAction() {
       @Override
-      public Void run() throws Exception {
+      public Object run() throws Exception {
         checkTablePerms(TEST_TABLE, TEST_FAMILY, null, Permission.Action.READ,
           Permission.Action.WRITE);
         return null;
@@ -1816,7 +1797,7 @@ public class TestAccessController {
 
   @Test
   public void testStopRegionServer() throws Exception {
-    PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
+    AccessTestAction action = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preStopRegionServer(ObserverContext.createAndPrepare(RSCP_ENV, null));
         return null;
@@ -1829,7 +1810,7 @@ public class TestAccessController {
 
   @Test
   public void testOpenRegion() throws Exception {
-    PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
+    AccessTestAction action = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preOpen(ObserverContext.createAndPrepare(RCP_ENV, null));
         return null;
@@ -1842,7 +1823,7 @@ public class TestAccessController {
 
   @Test
   public void testCloseRegion() throws Exception {
-    PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
+    AccessTestAction action = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preClose(ObserverContext.createAndPrepare(RCP_ENV, null), false);
         return null;
@@ -1855,7 +1836,7 @@ public class TestAccessController {
 
   @Test
   public void testSnapshot() throws Exception {
-    PrivilegedExceptionAction snapshotAction = new PrivilegedExceptionAction() {
+    AccessTestAction snapshotAction = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preSnapshot(ObserverContext.createAndPrepare(CP_ENV, null),
           null, null);
@@ -1863,7 +1844,7 @@ public class TestAccessController {
       }
     };
 
-    PrivilegedExceptionAction deleteAction = new PrivilegedExceptionAction() {
+    AccessTestAction deleteAction = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preDeleteSnapshot(ObserverContext.createAndPrepare(CP_ENV, null),
           null);
@@ -1871,7 +1852,7 @@ public class TestAccessController {
       }
     };
 
-    PrivilegedExceptionAction restoreAction = new PrivilegedExceptionAction() {
+    AccessTestAction restoreAction = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preRestoreSnapshot(ObserverContext.createAndPrepare(CP_ENV, null),
           null, null);
@@ -1879,7 +1860,7 @@ public class TestAccessController {
       }
     };
 
-    PrivilegedExceptionAction cloneAction = new PrivilegedExceptionAction() {
+    AccessTestAction cloneAction = new AccessTestAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preCloneSnapshot(ObserverContext.createAndPrepare(CP_ENV, null),
           null, null);
@@ -1977,5 +1958,353 @@ public class TestAccessController {
     } finally {
       table.close();
     }
+  }
+
+  public void testCellPermissions() throws Exception {
+    // table/column/qualifier level permissions
+    final byte[] TEST_ROW = Bytes.toBytes("cellpermtest");
+    final byte[] TEST_Q1 = Bytes.toBytes("q1");
+    final byte[] TEST_Q2 = Bytes.toBytes("q2");
+    final byte[] TEST_Q3 = Bytes.toBytes("q3");
+    final byte[] TEST_Q4 = Bytes.toBytes("q4");
+    // test value
+    final byte[] ZERO = Bytes.toBytes(0L);
+
+    /* ---- Setup ---- */
+
+    // additional test user
+    final User userOther = User.createUserForTesting(conf, "user_check_cell_perms_other",
+      new String[0]);
+
+    // store two sets of values, one store with a cell level ACL, and one without
+    verifyAllowed(new AccessTestAction() {
+      public Object run() throws Exception {
+        HTable t = new HTable(conf, TEST_TABLE);
+        try {
+          Put p;
+          // with ro ACL
+          p = new Put(TEST_ROW).add(TEST_FAMILY, TEST_Q1, ZERO);
+          ProtobufUtil.setMutationACL(p, new UserTablePermissions()
+            .add(userOther, new TablePermission(Permission.Action.READ)));
+          t.put(p);
+         // with rw ACL
+         p = new Put(TEST_ROW).add(TEST_FAMILY, TEST_Q2, ZERO);
+          ProtobufUtil.setMutationACL(p, new UserTablePermissions()
+            .add(userOther, new TablePermission(Permission.Action.READ,
+              Permission.Action.WRITE)));
+          t.put(p);
+          // no ACL
+          p = new Put(TEST_ROW)
+            .add(TEST_FAMILY, TEST_Q3, ZERO)
+            .add(TEST_FAMILY, TEST_Q4, ZERO);
+          t.put(p);
+        } finally {
+          t.close();
+        }
+        return null;
+      }
+    }, USER_OWNER);
+
+    /* ---- Gets ---- */
+
+    AccessTestAction getQ1 = new AccessTestAction() {
+      public Object run() throws Exception {
+        Get get = new Get(TEST_ROW).addColumn(TEST_FAMILY, TEST_Q1);
+        HTable t = new HTable(conf, TEST_TABLE);
+        try {
+          return t.get(get).list();
+        } finally {
+          t.close();
+        }
+      }
+    };
+
+    AccessTestAction getQ2 = new AccessTestAction() {
+      public Object run() throws Exception {
+        Get get = new Get(TEST_ROW).addColumn(TEST_FAMILY, TEST_Q2);
+        HTable t = new HTable(conf, TEST_TABLE);
+        try {
+          return t.get(get).list();
+        } finally {
+          t.close();
+        }
+      }
+    };
+
+    AccessTestAction getQ3 = new AccessTestAction() {
+      public Object run() throws Exception {
+        Get get = new Get(TEST_ROW).addColumn(TEST_FAMILY, TEST_Q3);
+        HTable t = new HTable(conf, TEST_TABLE);
+        try {
+          return t.get(get).list();
+        } finally {
+          t.close();
+        }
+      }
+    };
+
+    AccessTestAction getQ4 = new AccessTestAction() {
+      public Object run() throws Exception {
+        Get get = new Get(TEST_ROW).addColumn(TEST_FAMILY, TEST_Q4);
+        HTable t = new HTable(conf, TEST_TABLE);
+        try {
+          return t.get(get).list();
+        } finally {
+          t.close();
+        }
+      }
+    };
+
+    // Confirm special read access set at cell level
+
+    verifyAllowed(getQ1, userOther);
+    verifyAllowed(getQ2, userOther);
+
+    // Confirm this access does not extend to other cells
+
+    verifyDenied(getQ3, userOther);
+    verifyDenied(getQ4, userOther);
+
+    /* ---- Scans ---- */
+
+    // check that a scan over the test data returns the expected number of KVs
+
+    final List<KeyValue> scanResults = new ArrayList<KeyValue>();
+
+    AccessTestAction scanAction = new AccessTestAction() {
+      public List<KeyValue> run() throws Exception {
+        Scan scan = new Scan();
+        scan.setStartRow(TEST_ROW);
+        scan.setStopRow(Bytes.add(TEST_ROW, new byte[]{ 0 } ));
+        scan.addFamily(TEST_FAMILY);
+        HTable t = new HTable(conf, TEST_TABLE);
+        try {
+          ResultScanner scanner = t.getScanner(scan);
+          Result result = null;
+          do {
+            result = scanner.next();
+            if (result != null) {
+              scanResults.addAll(result.list());
+            }
+          } while (result != null);
+        } finally {
+          t.close();
+        }
+        return scanResults;
+      }
+    };
+
+    // owner will see all values
+    scanResults.clear();
+    verifyAllowed(scanAction, USER_OWNER);
+    assertEquals(4, scanResults.size());
+
+    // other user will see 2 values
+    scanResults.clear();
+    verifyAllowed(scanAction, userOther);
+    assertEquals(2, scanResults.size());
+
+    /* ---- Increments ---- */
+
+    AccessTestAction incrementQ1 = new AccessTestAction() {
+      public Object run() throws Exception {
+        Increment i = new Increment(TEST_ROW).addColumn(TEST_FAMILY, TEST_Q1, 1L);
+        HTable t = new HTable(conf, TEST_TABLE);
+        try {
+          t.increment(i);
+        } finally {
+          t.close();
+        }
+        return null;
+      }
+    };
+
+    AccessTestAction incrementQ2 = new AccessTestAction() {
+      public Object run() throws Exception {
+        Increment i = new Increment(TEST_ROW).addColumn(TEST_FAMILY, TEST_Q2, 1L);
+        HTable t = new HTable(conf, TEST_TABLE);
+        try {
+          t.increment(i);
+        } finally {
+          t.close();
+        }
+        return null;
+      }
+    };
+
+    verifyDenied(incrementQ1, userOther);
+    verifyAllowed(incrementQ1, USER_OWNER);
+    verifyAllowed(incrementQ2, userOther);
+
+    /* ---- Deletes ---- */
+
+    AccessTestAction deleteFamily = new AccessTestAction() {
+      public Object run() throws Exception {
+        Delete delete = new Delete(TEST_ROW).deleteFamily(TEST_FAMILY);
+        HTable t = new HTable(conf, TEST_TABLE);
+        try {
+          t.delete(delete);
+        } finally {
+          t.close();
+        }
+        return null;
+      }
+    };
+
+    AccessTestAction deleteQ1 = new AccessTestAction() {
+      public Object run() throws Exception {
+        Delete delete = new Delete(TEST_ROW).deleteColumn(TEST_FAMILY, TEST_Q1);
+        HTable t = new HTable(conf, TEST_TABLE);
+        try {
+          t.delete(delete);
+        } finally {
+          t.close();
+        }
+        return null;
+      }
+    };
+
+    AccessTestAction deleteQ2 = new AccessTestAction() {
+      public Object run() throws Exception {
+        Delete delete = new Delete(TEST_ROW).deleteColumn(TEST_FAMILY, TEST_Q2);
+        HTable t = new HTable(conf, TEST_TABLE);
+        try {
+          t.delete(delete);
+        } finally {
+          t.close();
+        }
+        return null;
+      }
+    };
+
+    verifyDenied(deleteFamily, userOther);
+    verifyDenied(deleteQ1, userOther);
+    verifyAllowed(deleteQ1, USER_OWNER);
+    verifyAllowed(deleteQ2, userOther);
+  }
+
+  @Test
+  public void testGrantRevoke() throws Exception {
+
+    AccessTestAction grantAction = new AccessTestAction() {
+      public Object run() throws Exception {
+        HTable acl = new HTable(conf, AccessControlLists.ACL_TABLE_NAME);
+        try {
+          BlockingRpcChannel service = acl.coprocessorService(TEST_TABLE);
+          AccessControlService.BlockingInterface protocol =
+            AccessControlService.newBlockingStub(service);
+          ProtobufUtil.grant(protocol, USER_RO.getShortName(), TEST_TABLE,
+            TEST_FAMILY, null, Action.READ);
+        } finally {
+          acl.close();
+        }
+        return null;
+      }
+    };
+
+    AccessTestAction revokeAction = new AccessTestAction() {
+      public Object run() throws Exception {
+        HTable acl = new HTable(conf, AccessControlLists.ACL_TABLE_NAME);
+        try {
+          BlockingRpcChannel service = acl.coprocessorService(TEST_TABLE);
+          AccessControlService.BlockingInterface protocol =
+            AccessControlService.newBlockingStub(service);
+          ProtobufUtil.revoke(protocol, USER_RO.getShortName(), TEST_TABLE,
+            TEST_FAMILY, null, Action.READ);
+        } finally {
+          acl.close();
+        }
+        return null;
+      }
+    };
+
+    AccessTestAction getPermissionsAction = new AccessTestAction() {
+      public Object run() throws Exception {
+        HTable acl = new HTable(conf, AccessControlLists.ACL_TABLE_NAME);
+        try {
+          BlockingRpcChannel service = acl.coprocessorService(TEST_TABLE);
+          AccessControlService.BlockingInterface protocol =
+            AccessControlService.newBlockingStub(service);
+          ProtobufUtil.getUserPermissions(protocol, TEST_TABLE);
+        } finally {
+          acl.close();
+        }
+        return null;
+      }
+    };
+
+    verifyAllowed(grantAction, SUPERUSER, USER_ADMIN, USER_OWNER);
+    verifyDenied(grantAction, USER_CREATE, USER_RW, USER_RO, USER_NONE);
+
+    verifyAllowed(revokeAction, SUPERUSER, USER_ADMIN, USER_OWNER);
+    verifyDenied(revokeAction, USER_CREATE, USER_RW, USER_RO, USER_NONE);
+
+    verifyAllowed(getPermissionsAction, SUPERUSER, USER_ADMIN, USER_OWNER);
+    verifyDenied(getPermissionsAction, USER_CREATE, USER_RW, USER_RO, USER_NONE);
+  }
+
+  @Test
+  public void testACLCFProtection() throws Exception {
+    AccessTestAction addACLCFAction = new AccessTestAction() {
+      public Object run() throws Exception {
+        HBaseAdmin admin = new HBaseAdmin(TEST_UTIL.getConfiguration());
+        try {
+          admin.disableTable(TEST_TABLE);
+          try {
+            admin.addColumn(TEST_TABLE, AccessControlLists.ACL_COLUMNDESC);
+          } finally {
+            admin.enableTable(TEST_TABLE);
+          }
+        } finally {
+          admin.close();
+        }
+        return null;
+      }
+    };
+
+    AccessTestAction modifyACLCFAction = new AccessTestAction() {
+      public Object run() throws Exception {
+        HBaseAdmin admin = new HBaseAdmin(TEST_UTIL.getConfiguration());
+        try {
+          admin.disableTable(TEST_TABLE);
+          try {
+            admin.modifyColumn(TEST_TABLE, AccessControlLists.ACL_COLUMNDESC);
+          } finally {
+            admin.enableTable(TEST_TABLE);
+          }
+        } finally {
+          admin.close();
+        }
+        return null;
+      }
+    };
+
+    AccessTestAction deleteACLCFAction = new AccessTestAction() {
+      public Object run() throws Exception {
+        HBaseAdmin admin = new HBaseAdmin(TEST_UTIL.getConfiguration());
+        try {
+          admin.disableTable(TEST_TABLE);
+          try {
+            admin.deleteColumn(TEST_TABLE, AccessControlLists.ACL_CF_NAME);
+          } finally {
+            admin.enableTable(TEST_TABLE);
+          }
+        } finally {
+          admin.close();
+        }
+        return null;
+      }
+    };
+
+    // We need to interleave tests for delete and add
+    verifyDenied(deleteACLCFAction, USER_CREATE, USER_RW, USER_RO, USER_NONE);
+    verifyAllowed(deleteACLCFAction, SUPERUSER);
+    verifyAllowed(addACLCFAction, SUPERUSER);
+    verifyAllowed(deleteACLCFAction, USER_ADMIN);
+    verifyAllowed(addACLCFAction, USER_ADMIN);
+    verifyDenied(addACLCFAction, USER_CREATE, USER_RW, USER_RO, USER_NONE);
+
+    verifyAllowed(modifyACLCFAction, SUPERUSER, USER_ADMIN);
+    verifyDenied(modifyACLCFAction, USER_CREATE, USER_RW, USER_RO, USER_NONE);
   }
 }

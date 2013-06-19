@@ -17,7 +17,10 @@
 package org.apache.hadoop.hbase.util;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
+import java.util.Random;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.logging.Log;
@@ -28,9 +31,17 @@ import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.PerformanceEvaluation;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
+import org.apache.hadoop.hbase.client.HTable;
+import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.io.compress.Compression;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
+import org.apache.hadoop.hbase.protobuf.ProtobufUtil;
 import org.apache.hadoop.hbase.regionserver.BloomType;
+import org.apache.hadoop.hbase.regionserver.StoreFile;
+import org.apache.hadoop.hbase.security.User;
+import org.apache.hadoop.hbase.security.access.Permission;
+import org.apache.hadoop.hbase.security.access.TablePermission;
+import org.apache.hadoop.hbase.security.access.UserTablePermissions;
 import org.apache.hadoop.hbase.util.test.LoadTestDataGenerator;
 
 /**
@@ -76,6 +87,10 @@ public class LoadTestTool extends AbstractHBaseTool {
     "Encoding algorithm (e.g. prefix "
         + "compression) to use for data blocks in the test column family, "
         + "one of " + Arrays.toString(DataBlockEncoding.values()) + ".";
+
+  private static final String OPT_ACL = "acl";
+  /** Usage string for the acl option */
+  private static final String OPT_USAGE_ACL = "<probability>:<avg_acl_size>";
 
   private static final String OPT_BLOOM = "bloom";
   private static final String OPT_COMPRESSION = "compression";
@@ -137,6 +152,13 @@ public class LoadTestTool extends AbstractHBaseTool {
   //       console tool itself should only be used from console.
   private boolean isSkipInit = false;
   private boolean isInitOnly = false;
+
+  // ACL options
+  static final Random RNG = new Random();
+  private boolean isACL = false;
+  private double aclProbability;
+  private int minACLSize, maxACLSize;
+  private Pair<User,TablePermission>[] userPerms;
 
   private String[] splitColonSeparated(String option,
       int minNumCols, int maxNumCols) {
@@ -223,6 +245,8 @@ public class LoadTestTool extends AbstractHBaseTool {
         DEFAULT_START_KEY + ".");
     addOptNoArg(OPT_SKIP_INIT, "Skip the initialization; assume test table "
         + "already exists");
+
+    addOptWithArg(OPT_ACL, OPT_USAGE_ACL);
   }
 
   @Override
@@ -305,6 +329,32 @@ public class LoadTestTool extends AbstractHBaseTool {
             0, Integer.MAX_VALUE);
       }
 
+      isACL = cmd.hasOption(OPT_ACL);
+      System.out.println("Include ACLs: " + isACL);
+      if (isACL) {
+        String[] aclOpts = splitColonSeparated(OPT_ACL, 2, 2);
+        aclProbability = Double.valueOf(aclOpts[0]);
+        int avgACLSize = Integer.valueOf(aclOpts[1]);
+        minACLSize = avgACLSize / 2;
+        maxACLSize = avgACLSize * 3 / 2;
+        // Create the set of test users
+        userPerms = new Pair[maxACLSize];
+        for (int i = 0; i < maxACLSize; i++) {
+          List<Permission.Action> actions = new ArrayList<Permission.Action>();
+          actions.add(Permission.Action.READ); // Always include at least one perm
+          if (RNG.nextBoolean()) actions.add(Permission.Action.CREATE);
+          if (RNG.nextBoolean()) actions.add(Permission.Action.ADMIN);
+          if (RNG.nextBoolean()) actions.add(Permission.Action.WRITE);
+          userPerms[i] = new Pair<User,TablePermission>(
+            User.createUserForTesting(conf, String.format("user%d",  i), new String[0]),
+            new TablePermission(actions.toArray(new Permission.Action[actions.size()])));
+        }
+        System.out.println("ACL occurrance probability: " +
+          String.format("%.2f", aclProbability));
+        System.out.println("Min ACL size: " + minACLSize);
+        System.out.println("Max ACL size: " + maxACLSize);
+      }
+
       System.out.println("Percent of keys to verify: " + verifyPercent);
       System.out.println("Reader threads: " + numReaderThreads);
     }
@@ -357,7 +407,43 @@ public class LoadTestTool extends AbstractHBaseTool {
         minColDataSize, maxColDataSize, minColsPerKey, maxColsPerKey, COLUMN_FAMILY);
 
     if (isWrite) {
-      writerThreads = new MultiThreadedWriter(dataGen, conf, tableName);
+      writerThreads = new MultiThreadedWriter(dataGen, conf, tableName) {
+        volatile long numCells = 0;
+        volatile long numCellsWithACLs = 0;
+
+        @Override
+        public void insert(HTable table, Put put, long keyBase) {
+          if (RNG.nextDouble() < aclProbability) {
+            int numACLs = RNG.nextInt(maxACLSize);
+            if (numACLs < minACLSize) {
+              numACLs = minACLSize;
+            }
+            UserTablePermissions perms = new UserTablePermissions();
+            for (int i = 0; i < numACLs; i++) {
+              perms.add(userPerms[i].getFirst(), userPerms[i].getSecond());
+            }
+            ProtobufUtil.setMutationACL(put, perms);
+            numCellsWithACLs++;
+          }
+          numCells++;
+          super.insert(table, put, keyBase);
+        }
+
+        @Override
+        protected String progressInfo() {
+          StringBuilder sb = new StringBuilder();
+          sb.append(super.progressInfo());
+          appendToStatus(sb, "cells", numCells);
+          if (isACL) {
+            appendToStatus(sb, "cellsWithACLs", String.format("%d (%.2f%%)",
+              numCellsWithACLs,
+              100.0 * ((double)numCellsWithACLs / (double)numCells)));
+          }
+          return sb.toString();
+        }
+
+      };
+
       writerThreads.setMultiPut(isMultiPut);
     }
 
