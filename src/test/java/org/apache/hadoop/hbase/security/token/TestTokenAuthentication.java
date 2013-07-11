@@ -30,19 +30,20 @@ import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.LargeTests;
 import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.coprocessor.BaseEndpointCoprocessor;
+import org.apache.hadoop.hbase.coprocessor.CoprocessorHost;
 import org.apache.hadoop.hbase.ipc.CoprocessorProtocol;
-import org.apache.hadoop.hbase.ipc.HBaseRPC;
 import org.apache.hadoop.hbase.ipc.RequestContext;
 import org.apache.hadoop.hbase.ipc.RpcServer;
-import org.apache.hadoop.hbase.ipc.SecureRpcEngine;
 import org.apache.hadoop.hbase.ipc.SecureServer;
 import org.apache.hadoop.hbase.regionserver.HRegionServer;
+import org.apache.hadoop.hbase.security.SecureTestUtil;
 import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Writables;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.SecretManager;
 import org.apache.hadoop.security.token.Token;
+
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -84,15 +85,15 @@ public class TestTokenAuthentication {
   public static void setupBeforeClass() throws Exception {
     TEST_UTIL = new HBaseTestingUtility();
     Configuration conf = TEST_UTIL.getConfiguration();
-    conf.set(HBaseRPC.RPC_ENGINE_PROP, SecureRpcEngine.class.getName());
-    conf.set("hbase.coprocessor.region.classes",
+    SecureTestUtil.enableSecurity(conf);
+    conf.set(CoprocessorHost.REGION_COPROCESSOR_CONF_KEY,
+      conf.get(CoprocessorHost.REGION_COPROCESSOR_CONF_KEY) + "," +
         IdentityCoprocessor.class.getName());
     TEST_UTIL.startMiniCluster();
     HRegionServer rs = TEST_UTIL.getMiniHBaseCluster().getRegionServer(0);
     RpcServer server = rs.getRpcServer();
     assertTrue(server instanceof SecureServer);
-    SecretManager mgr =
-        ((SecureServer)server).getSecretManager();
+    SecretManager mgr = ((SecureServer)server).getSecretManager();
     assertTrue(mgr instanceof AuthenticationTokenSecretManager);
     secretManager = (AuthenticationTokenSecretManager)mgr;
   }
@@ -126,7 +127,7 @@ public class TestTokenAuthentication {
     final Configuration conf = TEST_UTIL.getConfiguration();
     conf.set("hadoop.security.authentication", "kerberos");
     conf.set("randomkey", UUID.randomUUID().toString());
-    testuser.setConfiguration(conf);
+    UserGroupInformation.setConfiguration(conf);
     Token<AuthenticationTokenIdentifier> token =
         secretManager.generateToken("testuser");
     testuser.addToken(token);
@@ -135,13 +136,17 @@ public class TestTokenAuthentication {
     testuser.doAs(new PrivilegedExceptionAction<Object>() {
       public Object run() throws Exception {
         HTable table = new HTable(conf, ".META.");
-        IdentityProtocol prot = table.coprocessorProxy(
+        try {
+          IdentityProtocol prot = table.coprocessorProxy(
             IdentityProtocol.class, HConstants.EMPTY_START_ROW);
-        String myname = prot.whoami();
-        assertEquals("testuser", myname);
-        String authMethod = prot.getAuthMethod();
-        assertEquals("TOKEN", authMethod);
-        return null;
+          String myname = prot.whoami();
+          assertEquals("testuser", myname);
+          String authMethod = prot.getAuthMethod();
+          assertEquals("TOKEN", authMethod);
+          return null;
+        } finally {
+          table.close();
+        }
       }
     });
   }

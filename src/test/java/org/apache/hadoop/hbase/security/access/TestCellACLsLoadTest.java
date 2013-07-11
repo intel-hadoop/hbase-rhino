@@ -41,6 +41,7 @@ import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.hbase.util.TestMiniClusterLoadParallel;
 
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
@@ -94,14 +95,13 @@ public class TestCellACLsLoadTest extends TestMiniClusterLoadParallel {
         User.createUserForTesting(conf, String.format("user%d",  i), new String[0]),
         new TablePermission(actions.toArray(new Permission.Action[actions.size()])));
     }
+  }
 
-    // Enable security
+  @BeforeClass
+  public static void setupBeforeClass() throws Exception {
+    // setup configuration
+    Configuration conf = TEST_UTIL.getConfiguration();
     SecureTestUtil.enableSecurity(conf);
-
-    // We seem to need this too so we avoid HDFS shortcutting access exception
-    String baseuser = User.getCurrent().getShortName();
-    conf.set("hbase.superuser", conf.get("hbase.superuser", "") +
-      String.format(",%s.hfs.0,%s.hfs.1,%s.hfs.2", baseuser, baseuser, baseuser));
   }
 
   @Before

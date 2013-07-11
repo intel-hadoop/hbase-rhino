@@ -65,9 +65,6 @@ public class TestAccessControlFilter {
     TEST_UTIL = new HBaseTestingUtility();
     Configuration conf = TEST_UTIL.getConfiguration();
     SecureTestUtil.enableSecurity(conf);
-    String baseuser = User.getCurrent().getShortName();
-    conf.set("hbase.superuser", conf.get("hbase.superuser", "") +
-        String.format(",%s.hfs.0,%s.hfs.1,%s.hfs.2", baseuser, baseuser, baseuser));
     TEST_UTIL.startMiniCluster();
     TEST_UTIL.waitTableAvailable(AccessControlLists.ACL_TABLE_NAME, 5000);
 

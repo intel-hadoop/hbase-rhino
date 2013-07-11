@@ -22,6 +22,7 @@ import java.io.IOException;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.coprocessor.CoprocessorHost;
+import org.apache.hadoop.hbase.ipc.HBaseRPC;
 import org.apache.hadoop.hbase.ipc.SecureRpcEngine;
 import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.security.access.AccessController;
@@ -36,18 +37,18 @@ public class SecureTestUtil {
     conf.set("hadoop.security.authentication", "simple");
     conf.set("hbase.security.authorization", "false");
     conf.set("hbase.security.authentication", "simple");
-    conf.set("hbase.rpc.engine", SecureRpcEngine.class.getName());
+    conf.set(HBaseRPC.RPC_ENGINE_PROP, SecureRpcEngine.class.getName());
     conf.set(CoprocessorHost.MASTER_COPROCESSOR_CONF_KEY, AccessController.class.getName());
-    conf.set(CoprocessorHost.REGION_COPROCESSOR_CONF_KEY, AccessController.class.getName()+
-            ","+SecureBulkLoadEndpoint.class.getName());
+    conf.set(CoprocessorHost.REGION_COPROCESSOR_CONF_KEY, AccessController.class.getName() +
+        "," + SecureBulkLoadEndpoint.class.getName());
     conf.set(CoprocessorHost.REGIONSERVER_COPROCESSOR_CONF_KEY, AccessController.class.getName());
-    // add the process running user to superusers
-    String currentUser = User.getCurrent().getName();
-    conf.set("hbase.superuser", "admin,"+currentUser);
+    String baseuser = User.getCurrent().getShortName();
+    conf.set("hbase.superuser", "admin," + baseuser +
+        String.format(",%s.hfs.0,%s.hfs.1,%s.hfs.2", baseuser, baseuser, baseuser));
   }
 
   public static boolean isSecurityEnabled(Configuration conf) {
-    return conf.get("hbase.rpc.engine", "").equals(SecureRpcEngine.class.getName()) &&
+    return conf.get(HBaseRPC.RPC_ENGINE_PROP, "").equals(SecureRpcEngine.class.getName()) &&
         conf.get(CoprocessorHost.MASTER_COPROCESSOR_CONF_KEY, "")
           .equals(AccessController.class.getName()) &&
         conf.get(CoprocessorHost.REGION_COPROCESSOR_CONF_KEY, "")

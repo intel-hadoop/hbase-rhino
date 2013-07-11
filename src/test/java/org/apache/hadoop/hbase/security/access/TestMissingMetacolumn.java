@@ -28,6 +28,7 @@ import org.apache.hadoop.hbase.security.SecureTestUtil;
 import org.apache.hadoop.hbase.util.Bytes;
 
 import org.junit.experimental.categories.Category;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 @Category(MediumTests.class)
