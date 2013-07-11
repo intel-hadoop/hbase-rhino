@@ -747,6 +747,17 @@ public final class HConstants {
   /** Configuration key for enabling HLog encryption, a boolean */
   public static final String ENABLE_WAL_ENCRYPTION = "hbase.regionserver.wal.encryption";
 
+  /** Configuration key for the mapping directive from { user, table } -> key name, a string */
+  public static final String CRYPTO_USERKEY_NAME_MAPPING_CONF_KEY =
+      "hbase.crypto.user.key.mapping";
+
+  /**
+   * The default mapping directive from { user, table } -> key name, a string
+   * with two substitutions: the first, %t, being the table name, the second,
+   * %u, being the user name.
+   */
+  public static final String CRYPTO_USERKEY_DEFAULT_NAME_MAPPING = "%t-%u";
+
   private HConstants() {
     // Can't be instantiated with this ctor.
   }
