@@ -149,6 +149,8 @@ public class MultiThreadedWriter extends MultiThreadedAction {
             insertedKeys.add(rowKeyBase);
           }
         }
+      } catch (IOException e) {
+        LOG.error("Error inserting", e);
       } finally {
         try {
           table.close();
@@ -160,7 +162,7 @@ public class MultiThreadedWriter extends MultiThreadedAction {
     }
   }
 
-  public void insert(HTable table, Put put, long keyBase) {
+  public void insert(HTable table, Put put, long keyBase) throws IOException {
     try {
       long start = System.currentTimeMillis();
       table.put(put);

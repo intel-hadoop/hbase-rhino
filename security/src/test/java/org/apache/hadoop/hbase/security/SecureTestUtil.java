@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package org.apache.hadoop.hbase.security.access;
+package org.apache.hadoop.hbase.security;
 
 import java.io.IOException;
 
@@ -24,6 +24,8 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.coprocessor.CoprocessorHost;
 import org.apache.hadoop.hbase.ipc.SecureRpcEngine;
 import org.apache.hadoop.hbase.security.User;
+import org.apache.hadoop.hbase.security.access.AccessController;
+import org.apache.hadoop.hbase.security.access.SecureBulkLoadEndpoint;
 
 /**
  * Utility methods for testing security
@@ -32,6 +34,8 @@ public class SecureTestUtil {
   public static void enableSecurity(Configuration conf) throws IOException {
     conf.set("hadoop.security.authorization", "false");
     conf.set("hadoop.security.authentication", "simple");
+    conf.set("hbase.security.authorization", "false");
+    conf.set("hbase.security.authentication", "simple");
     conf.set("hbase.rpc.engine", SecureRpcEngine.class.getName());
     conf.set(CoprocessorHost.MASTER_COPROCESSOR_CONF_KEY, AccessController.class.getName());
     conf.set(CoprocessorHost.REGION_COPROCESSOR_CONF_KEY, AccessController.class.getName()+
@@ -40,5 +44,16 @@ public class SecureTestUtil {
     // add the process running user to superusers
     String currentUser = User.getCurrent().getName();
     conf.set("hbase.superuser", "admin,"+currentUser);
+  }
+
+  public static boolean isSecurityEnabled(Configuration conf) {
+    return conf.get("hbase.rpc.engine", "").equals(SecureRpcEngine.class.getName()) &&
+        conf.get(CoprocessorHost.MASTER_COPROCESSOR_CONF_KEY, "")
+          .equals(AccessController.class.getName()) &&
+        conf.get(CoprocessorHost.REGION_COPROCESSOR_CONF_KEY, "")
+          .equals(AccessController.class.getName()) &&
+        conf.get(CoprocessorHost.REGIONSERVER_COPROCESSOR_CONF_KEY, "")
+          .equals(AccessController.class.getName()) &&
+        conf.get("hbase.superuser") != null;
   }
 }
