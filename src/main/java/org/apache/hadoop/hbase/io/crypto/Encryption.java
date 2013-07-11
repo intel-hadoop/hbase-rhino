@@ -588,6 +588,25 @@ public abstract class Encryption {
   }
 
   /**
+   * Return the MD5 digest of the concatenation of the supplied arguments.
+   */
+  public static byte[] hash128(String... args) {
+    byte[] result = new byte[16];
+    try {
+      MessageDigest md = MessageDigest.getInstance("MD5");
+      for (String arg: args) {
+        md.update(Bytes.toBytes(arg));
+      }
+      md.digest(result, 0, result.length);
+      return result;
+    } catch (NoSuchAlgorithmException e) {
+      throw new RuntimeException(e);
+    } catch (DigestException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  /**
    * Return the SHA-256 digest of the concatenation of the supplied arguments.
    */
   public static byte[] hash256(byte[]... args) {
@@ -596,6 +615,25 @@ public abstract class Encryption {
       MessageDigest md = MessageDigest.getInstance("SHA-256");
       for (byte[] arg: args) {
         md.update(arg);
+      }
+      md.digest(result, 0, result.length);
+      return result;
+    } catch (NoSuchAlgorithmException e) {
+      throw new RuntimeException(e);
+    } catch (DigestException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  /**
+   * Return the SHA-256 digest of the concatenation of the supplied arguments.
+   */
+  public static byte[] hash256(String... args) {
+    byte[] result = new byte[32];
+    try {
+      MessageDigest md = MessageDigest.getInstance("SHA-256");
+      for (String arg: args) {
+        md.update(Bytes.toBytes(arg));
       }
       md.digest(result, 0, result.length);
       return result;

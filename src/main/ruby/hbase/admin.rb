@@ -247,7 +247,15 @@ module Hbase
             # (3) column family spec
             descriptor = hcd(arg, htd)
             htd.setValue(COMPRESSION_COMPACT, arg[COMPRESSION_COMPACT]) if arg[COMPRESSION_COMPACT]
-            htd.addFamily(hcd(arg, htd))
+            if arg[CRYPTO]
+              algorithm = org.apache.hadoop.hbase.io.crypto.Encryption.getEncryptionAlgorithmByName(arg[CRYPTO])
+              raise(ArgumentError, "Unsupported encryption algorithm") if algorithm.nil?
+              descriptor.setEncryptionType(algorithm)
+            end
+            if arg[CRYPTO_KEY]
+              descriptor.setEncryptionKey(@conf, org.apache.hadoop.hbase.io.crypto.Encryption.hash256(arg[CRYPTO_KEY]))
+            end
+            htd.addFamily(descriptor)
           end
         end
       end
@@ -372,6 +380,17 @@ module Hbase
           if arg[COMPRESSION_COMPACT]
             descriptor.setValue(COMPRESSION_COMPACT, arg[COMPRESSION_COMPACT])
           end
+
+          if arg[CRYPTO]
+            algorithm = org.apache.hadoop.hbase.io.crypto.Encryption.getEncryptionAlgorithmByName(arg[CRYPTO])
+            raise(ArgumentError, "Unsupported encryption algorithm") if algorithm.nil?
+            descriptor.setEncryptionType(algorithm)
+          end
+
+          if arg[CRYPTO_KEY]
+            descriptor.setEncryptionKey(@conf, org.apache.hadoop.hbase.io.crypto.Encryption.hash256(arg[CRYPTO_KEY]))
+          end
+
           column_name = descriptor.getNameAsString
 
           # If column already exist, then try to alter it. Create otherwise.

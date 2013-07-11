@@ -917,7 +917,7 @@ public class HColumnDescriptor implements WritableComparable<HColumnDescriptor> 
         continue;
       }
       String key = Bytes.toString(k.get());
-      String value = Bytes.toString(values.get(k).get());
+      String value = Bytes.toStringBinary(values.get(k).get());
       if (printDefaults
           || !DEFAULT_VALUES.containsKey(key)
           || !DEFAULT_VALUES.get(key).equalsIgnoreCase(value)) {
@@ -940,7 +940,7 @@ public class HColumnDescriptor implements WritableComparable<HColumnDescriptor> 
           continue;
         }
         String key = Bytes.toString(k.get());
-        String value = Bytes.toString(values.get(k).get());
+        String value = Bytes.toStringBinary(values.get(k).get());
         if (printComma) {
           s.append(", ");
         }
