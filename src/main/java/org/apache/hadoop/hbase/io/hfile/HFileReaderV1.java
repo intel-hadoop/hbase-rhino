@@ -30,6 +30,7 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.io.crypto.Encryption.Context;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
 import org.apache.hadoop.hbase.io.hfile.BlockType.BlockCategory;
 import org.apache.hadoop.hbase.io.hfile.HFile.FileInfo;
@@ -699,4 +700,8 @@ public class HFileReaderV1 extends AbstractHFileReader {
     return fileInfoLoaded;
   }
 
+  @Override
+  public Context getCryptoContext() {
+    return null;
+  }
 }

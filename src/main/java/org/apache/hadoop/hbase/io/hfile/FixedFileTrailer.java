@@ -114,6 +114,9 @@ public class FixedFileTrailer {
   /** Raw key comparator class name in version 2 */
   private String comparatorClassName = RawComparator.class.getName();
 
+  /** The offset to the encrypted key stored in the file. */
+  private long encryptionKeyBlockOffset;
+
   /** The {@link HFile} format major version. */
   private final int majorVersion;
 
@@ -212,6 +215,7 @@ public class FixedFileTrailer {
       .setLastDataBlockOffset(lastDataBlockOffset)
       .setComparatorClassName(comparatorClassName)
       .setCompressionCodec(compressionCodec.ordinal())
+      .setEncryptionBlockOffset(encryptionKeyBlockOffset)
       .build().writeDelimitedTo(baos);
     output.write(baos.toByteArray());
     // Pad to make up the difference between variable PB encoding length and the
@@ -233,6 +237,10 @@ public class FixedFileTrailer {
    * @throws IOException
    */
   void serializeAsWritable(DataOutputStream output) throws IOException {
+    if (encryptionKeyBlockOffset != 0) {
+      throw new IOException("Writable trailer metadata does not support encryption");
+    }
+
     output.writeLong(fileInfoOffset);
     output.writeLong(loadOnOpenDataOffset);
     output.writeInt(dataIndexCount);
@@ -341,6 +349,9 @@ public class FixedFileTrailer {
     } else {
       compressionCodec = Compression.Algorithm.NONE;
     }
+    if (builder.hasEncryptionBlockOffset()) {
+      encryptionKeyBlockOffset = builder.getEncryptionBlockOffset();
+    }
   }
 
   /**
@@ -392,6 +403,7 @@ public class FixedFileTrailer {
       append(sb, "firstDataBlockOffset=" + firstDataBlockOffset);
       append(sb, "lastDataBlockOffset=" + lastDataBlockOffset);
       append(sb, "comparatorClassName=" + comparatorClassName);
+      append(sb, "encryptionKeyBlockOffset=" + encryptionKeyBlockOffset);
     }
     append(sb, "majorVersion=" + majorVersion);
     append(sb, "minorVersion=" + minorVersion);
@@ -648,5 +660,14 @@ public class FixedFileTrailer {
    */
   private static int materializeVersion(int majorVersion, int minorVersion) {
     return ((majorVersion & 0x00ffffff) | (minorVersion << 24));
+  }
+
+  public long getEncryptionKeyBlockOffset() {
+    expectAtLeastMajorVersion(2);
+    return encryptionKeyBlockOffset;
+  }
+
+  public void setEncryptionKeyBlockOffset(long offset) {
+    this.encryptionKeyBlockOffset = offset;
   }
 }

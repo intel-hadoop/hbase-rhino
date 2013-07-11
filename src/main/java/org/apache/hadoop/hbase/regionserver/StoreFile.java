@@ -51,6 +51,7 @@ import org.apache.hadoop.hbase.fs.HFileSystem;
 import org.apache.hadoop.hbase.io.HFileLink;
 import org.apache.hadoop.hbase.io.HalfStoreFileReader;
 import org.apache.hadoop.hbase.io.Reference;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
 import org.apache.hadoop.hbase.io.hfile.BlockType;
 import org.apache.hadoop.hbase.io.hfile.CacheConfig;
@@ -174,6 +175,9 @@ public class StoreFile extends SchemaConfigured {
   // Set when we obtain a Reader.
   private long maxMemstoreTS = -1;
 
+  // Crypto context
+  private final Encryption.Context cryptoContext;
+
   public long getMaxMemstoreTS() {
     return maxMemstoreTS;
   }
@@ -256,7 +260,8 @@ public class StoreFile extends SchemaConfigured {
             final Configuration conf,
             final CacheConfig cacheConf,
             final BloomType cfBloomType,
-            final HFileDataBlockEncoder dataBlockEncoder)
+            final HFileDataBlockEncoder dataBlockEncoder,
+            final Encryption.Context cryptoContext)
       throws IOException {
     this.fs = fs;
     this.path = p;
@@ -264,6 +269,7 @@ public class StoreFile extends SchemaConfigured {
     this.dataBlockEncoder =
         dataBlockEncoder == null ? NoOpDataBlockEncoder.INSTANCE
             : dataBlockEncoder;
+    this.cryptoContext = cryptoContext;
 
     if (HFileLink.isHFileLink(p)) {
       this.link = new HFileLink(conf, p);
@@ -734,6 +740,7 @@ public class StoreFile extends SchemaConfigured {
         HFile.DEFAULT_COMPRESSION_ALGORITHM;
     private HFileDataBlockEncoder dataBlockEncoder =
         NoOpDataBlockEncoder.INSTANCE;
+    private Encryption.Context cryptoContext;
     private KeyValue.KVComparator comparator = KeyValue.COMPARATOR;
     private BloomType bloomType = BloomType.NONE;
     private long maxKeyCount = 0;
@@ -784,6 +791,11 @@ public class StoreFile extends SchemaConfigured {
     public WriterBuilder withDataBlockEncoder(HFileDataBlockEncoder encoder) {
       Preconditions.checkNotNull(encoder);
       this.dataBlockEncoder = encoder;
+      return this;
+    }
+
+    public WriterBuilder withEncryption(Encryption.Context cryptoContext) {
+      this.cryptoContext = cryptoContext;
       return this;
     }
 
@@ -867,9 +879,9 @@ public class StoreFile extends SchemaConfigured {
       if (comparator == null) {
         comparator = KeyValue.COMPARATOR;
       }
-      return new Writer(fs, filePath, blockSize, compressAlgo, dataBlockEncoder,
-          conf, cacheConf, comparator, bloomType, maxKeyCount, checksumType,
-          bytesPerChecksum, includeMVCCReadpoint);
+      return new Writer(fs, filePath, blockSize, compressAlgo, cryptoContext,
+          dataBlockEncoder, conf, cacheConf, comparator, bloomType,
+          maxKeyCount, checksumType, bytesPerChecksum, includeMVCCReadpoint);
     }
   }
 
@@ -1040,7 +1052,7 @@ public class StoreFile extends SchemaConfigured {
      * @throws IOException problem writing to FS
      */
     private Writer(FileSystem fs, Path path, int blocksize,
-        Compression.Algorithm compress,
+        Compression.Algorithm compress, Encryption.Context cryptoContext,
         HFileDataBlockEncoder dataBlockEncoder, final Configuration conf,
         CacheConfig cacheConf,
         final KVComparator comparator, BloomType bloomType, long maxKeys,
@@ -1053,6 +1065,7 @@ public class StoreFile extends SchemaConfigured {
           .withBlockSize(blocksize)
           .withCompression(compress)
           .withDataBlockEncoder(dataBlockEncoder)
+          .withEncryptionContext(cryptoContext)
           .withComparator(comparator.getRawComparator())
           .withChecksumType(checksumType)
           .withBytesPerChecksum(bytesPerChecksum)

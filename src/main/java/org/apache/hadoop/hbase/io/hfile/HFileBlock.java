@@ -18,7 +18,6 @@
 package org.apache.hadoop.hbase.io.hfile;
 
 import static org.apache.hadoop.hbase.io.hfile.BlockType.MAGIC_LENGTH;
-import static org.apache.hadoop.hbase.io.hfile.Compression.Algorithm.NONE;
 
 import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
@@ -37,8 +36,9 @@ import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.fs.HFileSystem;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
-import org.apache.hadoop.hbase.io.hfile.Compression.Algorithm;
+import org.apache.hadoop.hbase.io.hfile.Compression;
 import org.apache.hadoop.hbase.regionserver.MemStore;
 import org.apache.hadoop.hbase.regionserver.metrics.SchemaConfigured;
 import org.apache.hadoop.hbase.util.Bytes;
@@ -639,6 +639,9 @@ public class HFileBlock extends SchemaConfigured implements Cacheable {
     /** Compression algorithm for all blocks this instance writes. */
     private final Compression.Algorithm compressAlgo;
 
+    /** Crypto context */
+    protected Encryption.Context cryptoContext;
+
     /** Data block encoder used for data blocks */
     private final HFileDataBlockEncoder dataBlockEncoder;
 
@@ -658,6 +661,12 @@ public class HFileBlock extends SchemaConfigured implements Cacheable {
     
     /** Underlying stream to write compressed bytes to */
     private ByteArrayOutputStream compressedByteStream;
+
+    /** Encryption output stream */
+    private CompressionOutputStream cryptoStream;
+
+    /** Underlying stream to write encrypted bytes to */
+    private ByteArrayOutputStream cryptoByteStream;
 
     /**
      * Current block type. Set in {@link #startWriting(BlockType)}. Could be
@@ -732,27 +741,42 @@ public class HFileBlock extends SchemaConfigured implements Cacheable {
      * @param bytesPerChecksum bytes per checksum
      */
     public Writer(Compression.Algorithm compressionAlgorithm,
-          HFileDataBlockEncoder dataBlockEncoder, boolean includesMemstoreTS,
-          int minorVersion,
-          ChecksumType checksumType, int bytesPerChecksum) {
+        Encryption.Context cryptoContext, HFileDataBlockEncoder dataBlockEncoder,
+        boolean includesMemstoreTS, int minorVersion,
+        ChecksumType checksumType, int bytesPerChecksum) {
       this.minorVersion = minorVersion;
-      compressAlgo = compressionAlgorithm == null ? NONE : compressionAlgorithm;
+      this.compressAlgo = compressionAlgorithm == null ?
+          Compression.Algorithm.NONE : compressionAlgorithm;
+      this.cryptoContext = cryptoContext;
       this.dataBlockEncoder = dataBlockEncoder != null
           ? dataBlockEncoder : NoOpDataBlockEncoder.INSTANCE;
 
       baosInMemory = new ByteArrayOutputStream();
-      if (compressAlgo != NONE) {
+      if (compressAlgo != Compression.Algorithm.NONE) {
         compressor = compressionAlgorithm.getCompressor();
         compressedByteStream = new ByteArrayOutputStream();
         try {
-          compressionStream =
-              compressionAlgorithm.createPlainCompressionStream(
-                  compressedByteStream, compressor);
+          compressionStream = compressionAlgorithm.createPlainCompressionStream(compressedByteStream,
+            compressor);
+        } catch (IOException e) {
+          throw new RuntimeException("Could not create compression stream for algorithm " +
+              compressionAlgorithm, e);
+        }
+      }
+
+      if (cryptoContext != null) {
+        // encrypt in place of compression
+        Encryption.Algorithm cryptoAlgorithm = cryptoContext.getAlgorithm();
+        cryptoByteStream = new ByteArrayOutputStream();
+        try {
+          cryptoStream = cryptoAlgorithm.createEncryptionStream(cryptoByteStream,
+            cryptoContext);
         } catch (IOException e) {
           throw new RuntimeException("Could not create compression stream " + 
               "for algorithm " + compressionAlgorithm, e);
         }
       }
+
       if (minorVersion > MINOR_VERSION_NO_CHECKSUM
           && bytesPerChecksum < HEADER_SIZE_WITH_CHECKSUMS) {
         throw new RuntimeException("Unsupported value of bytesPerChecksum. " +
@@ -864,7 +888,7 @@ public class HFileBlock extends SchemaConfigured implements Cacheable {
     private void version20compression() throws IOException {
       onDiskChecksum = HConstants.EMPTY_BYTE_ARRAY;
 
-      if (compressAlgo != NONE) {
+      if (compressAlgo != Compression.Algorithm.NONE) {
         compressedByteStream.reset();
         compressedByteStream.write(DUMMY_HEADER_NO_CHECKSUM);
 
@@ -901,30 +925,52 @@ public class HFileBlock extends SchemaConfigured implements Cacheable {
     }
 
     private void version21ChecksumAndCompression() throws IOException {
-      // do the compression
-      if (compressAlgo != NONE) {
-        compressedByteStream.reset();
-        compressedByteStream.write(DUMMY_HEADER_WITH_CHECKSUM);
 
-        compressionStream.resetState();
+      if (cryptoContext != null) {
 
-        compressionStream.write(uncompressedBytesWithHeader, headerSize(this.minorVersion),
+        // +--------------------------+
+        // | 4 bytes plaintext length |
+        // +--------------------------+
+        // | encrypted block data ... |
+        // +--------------------------+
+          
+        cryptoStream.resetState();
+        cryptoByteStream.reset();
+        cryptoByteStream.write(DUMMY_HEADER_WITH_CHECKSUM);
+        if (compressAlgo != Compression.Algorithm.NONE) {
+          compressedByteStream.reset();
+          compressionStream.resetState();
+          compressionStream.write(uncompressedBytesWithHeader, headerSize(this.minorVersion),
             uncompressedBytesWithHeader.length - headerSize(this.minorVersion));
-
-        compressionStream.flush();
-        compressionStream.finish();
+          compressionStream.flush();
+          compressionStream.finish();
+          byte[] compressedBytes = compressedByteStream.toByteArray();
+          int payloadLen = compressedBytes.length;
+          cryptoByteStream.write(Bytes.toBytes(payloadLen));
+          if (payloadLen > 0) {
+            cryptoStream.write(compressedBytes);
+          }
+        } else {
+          int payloadLen = uncompressedBytesWithHeader.length - headerSize(this.minorVersion);
+          cryptoByteStream.write(Bytes.toBytes(payloadLen));
+          if (payloadLen > 0) {
+            cryptoStream.write(uncompressedBytesWithHeader, headerSize(this.minorVersion),
+              payloadLen);
+          }
+        }
+        cryptoStream.flush();
+        cryptoStream.finish();
 
         // generate checksums
-        onDiskDataSizeWithHeader = compressedByteStream.size(); // data size
+        onDiskDataSizeWithHeader = cryptoByteStream.size(); // data size
 
         // reserve space for checksums in the output byte stream
-        ChecksumUtil.reserveSpaceForChecksums(compressedByteStream, 
+        ChecksumUtil.reserveSpaceForChecksums(cryptoByteStream, 
           onDiskDataSizeWithHeader, bytesPerChecksum);
 
-
-        onDiskBytesWithHeader = compressedByteStream.toByteArray();
+        onDiskBytesWithHeader = cryptoByteStream.toByteArray();
         put21Header(onDiskBytesWithHeader, 0, onDiskBytesWithHeader.length,
-            uncompressedBytesWithHeader.length, onDiskDataSizeWithHeader);
+          uncompressedBytesWithHeader.length, onDiskDataSizeWithHeader);
 
        // generate checksums for header and data. The checksums are
        // part of onDiskBytesWithHeader itself.
@@ -938,29 +984,71 @@ public class HFileBlock extends SchemaConfigured implements Cacheable {
 
         //set the header for the uncompressed bytes (for cache-on-write)
         put21Header(uncompressedBytesWithHeader, 0,
-            onDiskBytesWithHeader.length + onDiskChecksum.length,
-            uncompressedBytesWithHeader.length, onDiskDataSizeWithHeader);
+          onDiskBytesWithHeader.length + onDiskChecksum.length,
+          uncompressedBytesWithHeader.length, onDiskDataSizeWithHeader);
 
       } else {
-        // If we are not using any compression, then the
-        // checksums are written to its own array onDiskChecksum.
-        onDiskBytesWithHeader = uncompressedBytesWithHeader;
+        
+        // do the compression
+        if (compressAlgo != Compression.Algorithm.NONE) {
+          compressedByteStream.reset();
+          compressedByteStream.write(DUMMY_HEADER_WITH_CHECKSUM);
 
-        onDiskDataSizeWithHeader = onDiskBytesWithHeader.length;
-        int numBytes = (int)ChecksumUtil.numBytes(
-                          uncompressedBytesWithHeader.length,
-                          bytesPerChecksum);
-        onDiskChecksum = new byte[numBytes];
+          compressionStream.resetState();
 
-        //set the header for the uncompressed bytes
-        put21Header(uncompressedBytesWithHeader, 0,
+          compressionStream.write(uncompressedBytesWithHeader, headerSize(this.minorVersion),
+            uncompressedBytesWithHeader.length - headerSize(this.minorVersion));
+
+          compressionStream.flush();
+          compressionStream.finish();
+
+          // generate checksums
+          onDiskDataSizeWithHeader = compressedByteStream.size(); // data size
+
+          // reserve space for checksums in the output byte stream
+          ChecksumUtil.reserveSpaceForChecksums(compressedByteStream, 
+            onDiskDataSizeWithHeader, bytesPerChecksum);
+
+          onDiskBytesWithHeader = compressedByteStream.toByteArray();
+          put21Header(onDiskBytesWithHeader, 0, onDiskBytesWithHeader.length,
+            uncompressedBytesWithHeader.length, onDiskDataSizeWithHeader);
+
+         // generate checksums for header and data. The checksums are
+         // part of onDiskBytesWithHeader itself.
+         ChecksumUtil.generateChecksums(
+           onDiskBytesWithHeader, 0, onDiskDataSizeWithHeader,
+           onDiskBytesWithHeader, onDiskDataSizeWithHeader,
+           checksumType, bytesPerChecksum);
+
+          // Checksums are already part of onDiskBytesWithHeader
+          onDiskChecksum = HConstants.EMPTY_BYTE_ARRAY;
+
+          //set the header for the uncompressed bytes (for cache-on-write)
+          put21Header(uncompressedBytesWithHeader, 0,
             onDiskBytesWithHeader.length + onDiskChecksum.length,
             uncompressedBytesWithHeader.length, onDiskDataSizeWithHeader);
 
-        ChecksumUtil.generateChecksums(
-          uncompressedBytesWithHeader, 0, uncompressedBytesWithHeader.length,
-          onDiskChecksum, 0,
-          checksumType, bytesPerChecksum);
+        } else {
+          // If we are not using any compression, then the
+          // checksums are written to its own array onDiskChecksum.
+          onDiskBytesWithHeader = uncompressedBytesWithHeader;
+
+          onDiskDataSizeWithHeader = onDiskBytesWithHeader.length;
+          int numBytes = (int)ChecksumUtil.numBytes(
+                          uncompressedBytesWithHeader.length,
+                          bytesPerChecksum);
+          onDiskChecksum = new byte[numBytes];
+
+          //set the header for the uncompressed bytes
+          put21Header(uncompressedBytesWithHeader, 0,
+            onDiskBytesWithHeader.length + onDiskChecksum.length,
+            uncompressedBytesWithHeader.length, onDiskDataSizeWithHeader);
+
+          ChecksumUtil.generateChecksums(
+            uncompressedBytesWithHeader, 0, uncompressedBytesWithHeader.length,
+            onDiskChecksum, 0,
+            checksumType, bytesPerChecksum);
+        }
       }
     }
 
@@ -1059,7 +1147,8 @@ public class HFileBlock extends SchemaConfigured implements Cacheable {
     private void writeHeaderAndData(DataOutputStream out) throws IOException {
       ensureBlockReady();
       out.write(onDiskBytesWithHeader);
-      if (compressAlgo == NONE && minorVersion > MINOR_VERSION_NO_CHECKSUM) {
+      if (compressAlgo == Compression.Algorithm.NONE && cryptoContext == null &&
+          minorVersion > MINOR_VERSION_NO_CHECKSUM) {
         if (onDiskChecksum == HConstants.EMPTY_BYTE_ARRAY) {
           throw new IOException("A " + blockType 
               + " without compression should have checksums " 
@@ -1081,7 +1170,7 @@ public class HFileBlock extends SchemaConfigured implements Cacheable {
      */
     byte[] getHeaderAndDataForTest() throws IOException {
       ensureBlockReady();
-      if (compressAlgo == NONE) {
+      if (compressAlgo == Compression.Algorithm.NONE && cryptoContext == null) {
         if (onDiskChecksum == HConstants.EMPTY_BYTE_ARRAY) {
           throw new IOException("A " + blockType 
               + " without compression should have checksums " 
@@ -1302,6 +1391,9 @@ public class HFileBlock extends SchemaConfigured implements Cacheable {
     /** Compression algorithm used by the {@link HFile} */
     protected Compression.Algorithm compressAlgo;
 
+    /** Crypto context */
+    protected Encryption.Context cryptoContext;
+
     /** The size of the file we are reading from, or -1 if unknown. */
     protected long fileSize;
 
@@ -1324,7 +1416,7 @@ public class HFileBlock extends SchemaConfigured implements Cacheable {
 
     public AbstractFSReader(FSDataInputStream istream, 
         FSDataInputStream istreamNoFsChecksum,
-        Algorithm compressAlgo,
+        Compression.Algorithm compressAlgo,
         long fileSize, int minorVersion, HFileSystem hfs, Path path) 
         throws IOException {
       this.istream = istream;
@@ -1504,7 +1596,7 @@ public class HFileBlock extends SchemaConfigured implements Cacheable {
     private static final int HEADER_DELTA = HEADER_SIZE_NO_CHECKSUM - 
                                             MAGIC_LENGTH;
 
-    public FSReaderV1(FSDataInputStream istream, Algorithm compressAlgo,
+    public FSReaderV1(FSDataInputStream istream, Compression.Algorithm compressAlgo,
         long fileSize) throws IOException {
       super(istream, istream, compressAlgo, fileSize, 0, null, null);
     }
@@ -1636,7 +1728,8 @@ public class HFileBlock extends SchemaConfigured implements Cacheable {
         };
 
     public FSReaderV2(FSDataInputStream istream, 
-        FSDataInputStream istreamNoFsChecksum, Algorithm compressAlgo,
+        FSDataInputStream istreamNoFsChecksum, Compression.Algorithm compressAlgo,
+        Encryption.Context cryptoContext,
         long fileSize, int minorVersion, HFileSystem hfs, Path path) 
       throws IOException {
       super(istream, istreamNoFsChecksum, compressAlgo, fileSize, 
@@ -1659,15 +1752,16 @@ public class HFileBlock extends SchemaConfigured implements Cacheable {
         useHBaseChecksum = false;
       }
       this.useHBaseChecksumConfigured = useHBaseChecksum;
+      this.cryptoContext = cryptoContext;
     }
 
     /**
      * A constructor that reads files with the latest minor version.
      * This is used by unit tests only.
      */
-    FSReaderV2(FSDataInputStream istream, Algorithm compressAlgo,
-        long fileSize) throws IOException {
-      this(istream, istream, compressAlgo, fileSize,
+    FSReaderV2(FSDataInputStream istream, Compression.Algorithm compressAlgo,
+        Encryption.Context cryptoContext, long fileSize) throws IOException {
+      this(istream, istream, compressAlgo, cryptoContext, fileSize,
            HFileReaderV2.MAX_MINOR_VERSION, null, null);
     }
 
@@ -1823,7 +1917,7 @@ public class HFileBlock extends SchemaConfigured implements Cacheable {
         // Size that we have to skip in case we have already read the header.
         int preReadHeaderSize = header == null ? 0 : hdrSize;
 
-        if (compressAlgo == Compression.Algorithm.NONE) {
+        if (compressAlgo == Compression.Algorithm.NONE && cryptoContext == null) {
           // Just read the whole thing. Allocate enough space to read the
           // next block's header too.
 
@@ -1881,14 +1975,46 @@ public class HFileBlock extends SchemaConfigured implements Cacheable {
             return null;             // checksum mismatch
           }
 
-          DataInputStream dis = new DataInputStream(new ByteArrayInputStream(
-              onDiskBlock, hdrSize, onDiskSizeWithoutHeader));
+          ByteArrayInputStream in = new ByteArrayInputStream(onDiskBlock, hdrSize,
+            onDiskSizeWithoutHeader);
 
           // This will allocate a new buffer but keep header bytes.
           b.allocateBuffer(b.nextBlockOnDiskSizeWithHeader > 0);
 
-          decompress(b.buf.array(), b.buf.arrayOffset() + hdrSize, dis,
+          if (cryptoContext != null) {
+
+            // +--------------------------+
+            // | 4 bytes plaintext length |
+            // +--------------------------+
+            // | encrypted block data ... |
+            // +--------------------------+
+
+            byte[] plaintextLengthBytes = new byte[Bytes.SIZEOF_INT];
+            in.read(plaintextLengthBytes);
+            int plainTextLength = Bytes.toInt(plaintextLengthBytes);
+            if (plainTextLength > 0) {
+              onDiskSizeWithoutHeader -= Bytes.SIZEOF_INT;
+              byte[] plaintextBytes = new byte[onDiskSizeWithoutHeader];
+              Encryption.decrypt(plaintextBytes, 0, in, plainTextLength, cryptoContext);
+              in = new ByteArrayInputStream(plaintextBytes, 0, plainTextLength);
+
+              if (compressAlgo != Compression.Algorithm.NONE) {
+                decompress(b.buf.array(), b.buf.arrayOffset() + hdrSize, in,
+                  b.uncompressedSizeWithoutHeader);
+              } else {
+                IOUtils.readFully(in, b.buf.array(),
+                  b.buf.arrayOffset() + hdrSize, plainTextLength);
+              }
+
+            }
+            onDiskSizeWithoutHeader = plainTextLength;
+
+          } else {
+
+            decompress(b.buf.array(), b.buf.arrayOffset() + hdrSize, in,
               b.uncompressedSizeWithoutHeader);
+
+          }
 
           // Copy next block's header bytes into the new block if we have them.
           if (nextBlockOnDiskSize > 0) {
@@ -1927,7 +2053,7 @@ public class HFileBlock extends SchemaConfigured implements Cacheable {
         // This will also allocate enough room for the next block's header.
         b.allocateBuffer(true);
 
-        if (compressAlgo == Compression.Algorithm.NONE) {
+        if (compressAlgo == Compression.Algorithm.NONE  && cryptoContext == null) {
 
           // Avoid creating bounded streams and using a "codec" that does
           // nothing.
@@ -1957,11 +2083,45 @@ public class HFileBlock extends SchemaConfigured implements Cacheable {
               !validateBlockChecksum(b, compressedBytes, hdrSize)) {
             return null;             // checksum mismatch
           }
-          DataInputStream dis = new DataInputStream(new ByteArrayInputStream(
-              compressedBytes, hdrSize, b.onDiskSizeWithoutHeader));
 
-          decompress(b.buf.array(), b.buf.arrayOffset() + hdrSize, dis,
+          int onDiskSizeWithoutHeader = b.onDiskSizeWithoutHeader;
+
+          ByteArrayInputStream in = new ByteArrayInputStream(compressedBytes, hdrSize,
+            onDiskSizeWithoutHeader);
+
+          if (cryptoContext != null) {
+
+            // +--------------------------+
+            // | 4 bytes plaintext length |
+            // +--------------------------+
+            // | encrypted block data ... |
+            // +--------------------------+
+
+            byte[] plaintextLengthBytes = new byte[Bytes.SIZEOF_INT];
+            in.read(plaintextLengthBytes);
+            int plainTextLength = Bytes.toInt(plaintextLengthBytes);
+            if (plainTextLength > 0) {
+              onDiskSizeWithoutHeader -= Bytes.SIZEOF_INT;
+              byte[] plaintextBytes = new byte[onDiskSizeWithoutHeader];
+              Encryption.decrypt(plaintextBytes, 0, in, plainTextLength, cryptoContext);
+              in = new ByteArrayInputStream(plaintextBytes, 0, plainTextLength);
+
+              if (compressAlgo != Compression.Algorithm.NONE) {
+                decompress(b.buf.array(), b.buf.arrayOffset() + hdrSize, in,
+                  b.uncompressedSizeWithoutHeader);
+              } else {
+                IOUtils.readFully(in, b.buf.array(),
+                  b.buf.arrayOffset() + hdrSize, plainTextLength);
+              }
+            }
+            onDiskSizeWithoutHeader = plainTextLength;
+
+          } else {
+
+            decompress(b.buf.array(), b.buf.arrayOffset() + hdrSize, in,
               b.uncompressedSizeWithoutHeader);
+
+          }
 
           if (b.nextBlockOnDiskSizeWithHeader > 0) {
             // Copy the next block's header into the new block.

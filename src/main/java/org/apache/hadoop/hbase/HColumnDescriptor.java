@@ -19,6 +19,8 @@
  */
 package org.apache.hadoop.hbase;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
@@ -27,13 +29,17 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+
+import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
 import org.apache.hadoop.hbase.io.hfile.Compression;
 import org.apache.hadoop.hbase.io.hfile.HFile;
 import org.apache.hadoop.hbase.regionserver.StoreFile;
 import org.apache.hadoop.hbase.regionserver.StoreFile.BloomType;
 import org.apache.hadoop.hbase.regionserver.wal.HLog;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.WritableComparable;
@@ -86,6 +92,9 @@ public class HColumnDescriptor implements WritableComparable<HColumnDescriptor> 
   public static final String REPLICATION_SCOPE = "REPLICATION_SCOPE";
   public static final String MIN_VERSIONS = "MIN_VERSIONS";
   public static final String KEEP_DELETED_CELLS = "KEEP_DELETED_CELLS";
+
+  public static final String CRYPTO = "CRYPTO";
+  public static final String CRYPTO_KEY = "CRYPTOKEY";
 
   /**
    * Default compression type.
@@ -208,6 +217,8 @@ public class HColumnDescriptor implements WritableComparable<HColumnDescriptor> 
       for (String s : DEFAULT_VALUES.keySet()) {
         RESERVED_KEYWORDS.add(new ImmutableBytesWritable(Bytes.toBytes(s)));
       }
+      RESERVED_KEYWORDS.add(new ImmutableBytesWritable(Bytes.toBytes(CRYPTO)));
+      RESERVED_KEYWORDS.add(new ImmutableBytesWritable(Bytes.toBytes(CRYPTO_KEY)));
   }
 
   // Column family name
@@ -1067,5 +1078,64 @@ public class HColumnDescriptor implements WritableComparable<HColumnDescriptor> 
         result = 1;
     }
     return result;
+  }
+
+  /**
+   * Return the encryption algorithm in use by this family
+   */
+  public Encryption.Algorithm getEncryptionType() {
+    String algorithm = getValue(CRYPTO);
+    if (algorithm != null) {
+      return Encryption.getEncryptionAlgorithmByName(algorithm);
+    }
+    return Encryption.Algorithm.NONE;
+  }
+
+  /**
+   * Set the encryption algorithm for use with this family
+   * @param algorithm
+   */
+  public void setEncryptionType(Encryption.Algorithm algorithm) {
+    setValue(CRYPTO, algorithm.getName());
+  }
+
+  /*
+   * Crypto attr format:
+   * +--------------------------+
+   * | 4 bytes plaintext length |
+   * +--------------------------+
+   * | encrypted data ...       |
+   * +--------------------------+
+   */
+
+  /** Return the crypto key attribute for the family, or null if not set  */
+  public byte[] getEncryptionKey(Configuration conf) throws IOException {
+    byte[] value = getValue(Bytes.toBytes(CRYPTO_KEY));
+    if (value == null) {
+      return null;
+    }
+    ByteArrayInputStream in = new ByteArrayInputStream(value);
+    byte[] plaintextLengthBytes = new byte[Bytes.SIZEOF_INT];
+    in.read(plaintextLengthBytes);
+    int plaintextLength = Bytes.toInt(plaintextLengthBytes);
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    Encryption.decryptWithSubjectKey(out, in, plaintextLength,
+      conf.get(HConstants.CRYPTO_MASTERKEY_NAME_CONF_KEY, User.getCurrent().getShortName()),
+      conf, Encryption.Algorithm.AES);
+    // Use it
+    return out.toByteArray();
+  }
+
+  /**
+   * Set the crypto key attribute for the family
+   * @throws IOException 
+   */
+  public void setEncryptionKey(Configuration conf, byte[] keyBytes) throws IOException {
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    out.write(Bytes.toBytes(keyBytes.length));
+    Encryption.encryptWithSubjectKey(out, new ByteArrayInputStream(keyBytes),
+      conf.get(HConstants.CRYPTO_MASTERKEY_NAME_CONF_KEY, User.getCurrent().getShortName()),
+      conf, Encryption.Algorithm.AES);
+    setValue(Bytes.toBytes(CRYPTO_KEY), out.toByteArray());
   }
 }

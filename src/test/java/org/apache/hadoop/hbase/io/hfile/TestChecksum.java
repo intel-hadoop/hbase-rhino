@@ -82,7 +82,7 @@ public class TestChecksum {
         Path path = new Path(TEST_UTIL.getDataTestDir(), "blocks_v2_"
             + algo);
         FSDataOutputStream os = fs.create(path);
-        HFileBlock.Writer hbw = new HFileBlock.Writer(algo, null,
+        HFileBlock.Writer hbw = new HFileBlock.Writer(algo, null, null,
             true, 1, HFile.DEFAULT_CHECKSUM_TYPE,
             HFile.DEFAULT_BYTES_PER_CHECKSUM);
         long totalSize = 0;
@@ -175,7 +175,7 @@ public class TestChecksum {
         Path path = new Path(TEST_UTIL.getDataTestDir(), "checksumChunk_" + 
                              algo + bytesPerChecksum);
         FSDataOutputStream os = fs.create(path);
-        HFileBlock.Writer hbw = new HFileBlock.Writer(algo, null,
+        HFileBlock.Writer hbw = new HFileBlock.Writer(algo, null, null,
           true, 1,HFile.DEFAULT_CHECKSUM_TYPE, bytesPerChecksum);
 
         // write one block. The block has data
@@ -208,7 +208,7 @@ public class TestChecksum {
         FSDataInputStream is = fs.open(path);
         FSDataInputStream nochecksum = hfs.getNoChecksumFs().open(path);
         HFileBlock.FSReader hbr = new HFileBlock.FSReaderV2(is, nochecksum, 
-            algo, totalSize, HFile.MAX_FORMAT_VERSION, hfs, path);
+            algo, null, totalSize, HFile.MAX_FORMAT_VERSION, hfs, path);
         HFileBlock b = hbr.readBlockData(0, -1, -1, pread);
         is.close();
         b.sanityCheck();
@@ -261,7 +261,7 @@ public class TestChecksum {
     FSReaderV2Test(FSDataInputStream istream, Algorithm algo,
                    long fileSize, int minorVersion, FileSystem fs,
                    Path path) throws IOException {
-      super(istream, istream, algo, fileSize, minorVersion, 
+      super(istream, istream, algo, null, fileSize, minorVersion, 
             (HFileSystem)fs, path);
     }
 

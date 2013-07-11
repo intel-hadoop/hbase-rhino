@@ -47,6 +47,7 @@ import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.KeyValue.KeyComparator;
 import org.apache.hadoop.hbase.fs.HFileSystem;
 import org.apache.hadoop.hbase.io.HbaseMapWritable;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
 import org.apache.hadoop.hbase.regionserver.metrics.SchemaMetrics;
 import org.apache.hadoop.hbase.regionserver.metrics.SchemaMetrics.SchemaAware;
@@ -317,8 +318,8 @@ public class HFile {
     protected Path path;
     protected FSDataOutputStream ostream;
     protected int blockSize = HColumnDescriptor.DEFAULT_BLOCKSIZE;
-    protected Compression.Algorithm compression =
-        HFile.DEFAULT_COMPRESSION_ALGORITHM;
+    protected Compression.Algorithm compression = HFile.DEFAULT_COMPRESSION_ALGORITHM;
+    protected Encryption.Context cryptoContext = null;
     protected HFileDataBlockEncoder encoder = NoOpDataBlockEncoder.INSTANCE;
     protected KeyComparator comparator;
     protected ChecksumType checksumType = HFile.DEFAULT_CHECKSUM_TYPE;
@@ -361,6 +362,11 @@ public class HFile {
       return this;
     }
 
+    public WriterFactory withEncryptionContext(Encryption.Context cryptoContext) {
+      this.cryptoContext = cryptoContext;
+      return this;
+    }
+
     public WriterFactory withDataBlockEncoder(HFileDataBlockEncoder encoder) {
       Preconditions.checkNotNull(encoder);
       this.encoder = encoder;
@@ -397,13 +403,13 @@ public class HFile {
       if (path != null) {
         ostream = AbstractHFileWriter.createOutputStream(conf, fs, path);
       }
-      return createWriter(fs, path, ostream, blockSize, compression, encoder, comparator,
-          checksumType, bytesPerChecksum, includeMVCCReadpoint);
+      return createWriter(fs, path, ostream, blockSize, compression, cryptoContext,
+          encoder, comparator, checksumType, bytesPerChecksum, includeMVCCReadpoint);
     }
 
     protected abstract Writer createWriter(FileSystem fs, Path path,
         FSDataOutputStream ostream, int blockSize,
-        Compression.Algorithm compress,
+        Compression.Algorithm compress, Encryption.Context cryptoContext,
         HFileDataBlockEncoder dataBlockEncoder,
         KeyComparator comparator, ChecksumType checksumType,
         int bytesPerChecksum, boolean includeMVCCReadpoint) throws IOException;
@@ -522,6 +528,8 @@ public class HFile {
     void close(boolean evictOnClose) throws IOException;
 
     DataBlockEncoding getEncodingOnDisk();
+
+    Encryption.Context getCryptoContext();
   }
 
   /**
@@ -568,6 +576,7 @@ public class HFile {
    * @param path Path to HFile
    * @param cacheConf Cache configuration for hfile's contents
    * @param preferredEncodingInCache Preferred in-cache data encoding algorithm.
+   * @param cryptoContext crypto context if using encryption
    * @return A version specific Hfile Reader
    * @throws IOException If file is invalid, will throw CorruptHFileException flavored IOException
    */
@@ -713,6 +722,17 @@ public class HFile {
    */
   public static String[] getSupportedCompressionAlgorithms() {
     return Compression.getSupportedAlgorithms();
+  }
+
+  /**
+   * Get names of supported encryption algorithms. The names are acceptable by
+   * HFile.Writer.
+   *
+   * @return Array of strings, each represents a supported encryption
+   *         algorithm.
+   */
+  public static String[] getSupportedEncryptionAlgorithms() {
+    return Encryption.getSupportedAlgorithms();
   }
 
   // Utility methods.

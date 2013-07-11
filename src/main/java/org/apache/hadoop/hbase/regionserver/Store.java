@@ -57,6 +57,7 @@ import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.fs.HFileSystem;
 import org.apache.hadoop.hbase.io.HFileLink;
 import org.apache.hadoop.hbase.io.HeapSize;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.hfile.CacheConfig;
 import org.apache.hadoop.hbase.io.hfile.Compression;
 import org.apache.hadoop.hbase.io.hfile.HFile;
@@ -163,6 +164,7 @@ public class Store extends SchemaConfigured implements HeapSize {
 
   private final int blocksize;
   private HFileDataBlockEncoder dataBlockEncoder;
+  private Encryption.Context cryptoContext;
 
   /** Checksum configuration */
   private ChecksumType checksumType;
@@ -207,6 +209,20 @@ public class Store extends SchemaConfigured implements HeapSize {
     this.dataBlockEncoder =
         new HFileDataBlockEncoderImpl(family.getDataBlockEncodingOnDisk(),
             family.getDataBlockEncoding());
+
+    // Crypto context for new store files
+    byte[] cfCryptoKey = family.getEncryptionKey(conf);
+    if (cfCryptoKey != null) {
+      Encryption.Algorithm algorithm = family.getEncryptionType();
+      if (algorithm != Encryption.Algorithm.NONE) {
+        cryptoContext = Encryption.newContext(conf);
+        cryptoContext.setAlgorithm(algorithm);
+        cryptoContext.setKey(algorithm, cfCryptoKey);
+      } else {
+        LOG.warn("Schema for family '" + family.getNameAsString() +
+            "' contains a crypto key but no algorithm");
+      }
+    }
 
     this.comparator = info.getComparator();
     // getTimeToLive returns ttl in seconds.  Convert to milliseconds.
@@ -452,7 +468,7 @@ public class Store extends SchemaConfigured implements HeapSize {
       completionService.submit(new Callable<StoreFile>() {
         public StoreFile call() throws IOException {
           StoreFile storeFile = new StoreFile(fs, p, conf, cacheConf,
-              family.getBloomFilterType(), dataBlockEncoder);
+              family.getBloomFilterType(), dataBlockEncoder, cryptoContext);
           passSchemaMetricsTo(storeFile);
           storeFile.createReader();
           return storeFile;
@@ -650,7 +666,7 @@ public class Store extends SchemaConfigured implements HeapSize {
     StoreFile.rename(fs, srcPath, dstPath);
 
     StoreFile sf = new StoreFile(fs, dstPath, this.conf, this.cacheConf,
-        this.family.getBloomFilterType(), this.dataBlockEncoder);
+        this.family.getBloomFilterType(), this.dataBlockEncoder, cryptoContext);
     passSchemaMetricsTo(sf);
 
     StoreFile.Reader r = sf.createReader();
@@ -941,7 +957,7 @@ public class Store extends SchemaConfigured implements HeapSize {
 
     status.setStatus("Flushing " + this + ": reopening flushed file");
     StoreFile sf = new StoreFile(this.fs, dstPath, this.conf, this.cacheConf,
-        this.family.getBloomFilterType(), this.dataBlockEncoder);
+        this.family.getBloomFilterType(), this.dataBlockEncoder, cryptoContext);
     passSchemaMetricsTo(sf);
 
     StoreFile.Reader r = sf.createReader();
@@ -999,6 +1015,7 @@ public class Store extends SchemaConfigured implements HeapSize {
             .withChecksumType(checksumType)
             .withBytesPerChecksum(bytesPerChecksum)
             .withCompression(compression)
+            .withEncryption(cryptoContext)
             .includeMVCCReadpoint(includeMVCCReadpoint)
             .build();
     // The store file writer's path does not include the CF name, so we need
@@ -1157,7 +1174,7 @@ public class Store extends SchemaConfigured implements HeapSize {
       } else {
         // Create storefile around what we wrote with a reader on it.
         sf = new StoreFile(this.fs, writer.getPath(), this.conf, this.cacheConf,
-          this.family.getBloomFilterType(), this.dataBlockEncoder);
+          this.family.getBloomFilterType(), this.dataBlockEncoder, cryptoContext);
         sf.createReader();
       }
     } finally {
@@ -1780,7 +1797,7 @@ public class Store extends SchemaConfigured implements HeapSize {
     try {
       storeFile = new StoreFile(this.fs, path, this.conf,
           this.cacheConf, this.family.getBloomFilterType(),
-          NoOpDataBlockEncoder.INSTANCE);
+          NoOpDataBlockEncoder.INSTANCE, cryptoContext);
       passSchemaMetricsTo(storeFile);
       storeFile.createReader();
     } catch (IOException e) {
@@ -1832,7 +1849,7 @@ public class Store extends SchemaConfigured implements HeapSize {
             " to " + destPath);
       }
       result = new StoreFile(this.fs, destPath, this.conf, this.cacheConf,
-          this.family.getBloomFilterType(), this.dataBlockEncoder);
+          this.family.getBloomFilterType(), this.dataBlockEncoder, cryptoContext);
       passSchemaMetricsTo(result);
       result.createReader();
     }
@@ -2459,7 +2476,7 @@ public class Store extends SchemaConfigured implements HeapSize {
 
   public static final long FIXED_OVERHEAD =
       ClassSize.align(SchemaConfigured.SCHEMA_CONFIGURED_UNALIGNED_HEAP_SIZE +
-          + (17 * ClassSize.REFERENCE) + (7 * Bytes.SIZEOF_LONG)
+          + (18 * ClassSize.REFERENCE) + (7 * Bytes.SIZEOF_LONG)
           + (5 * Bytes.SIZEOF_INT) + Bytes.SIZEOF_BOOLEAN);
 
   public static final long DEEP_OVERHEAD = ClassSize.align(FIXED_OVERHEAD

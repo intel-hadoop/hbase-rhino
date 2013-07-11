@@ -220,7 +220,7 @@ public class TestHFileBlockCompatibility {
         os.close();
 
         FSDataInputStream is = fs.open(path);
-        HFileBlock.FSReader hbr = new HFileBlock.FSReaderV2(is, is, algo,
+        HFileBlock.FSReader hbr = new HFileBlock.FSReaderV2(is, is, algo, null,
             totalSize, MINOR_VERSION, fs, path);
         HFileBlock b = hbr.readBlockData(0, -1, -1, pread);
         is.close();
@@ -233,7 +233,7 @@ public class TestHFileBlockCompatibility {
 
         if (algo == GZ) {
           is = fs.open(path);
-          hbr = new HFileBlock.FSReaderV2(is, is, algo, totalSize, MINOR_VERSION,
+          hbr = new HFileBlock.FSReaderV2(is, is, algo, null, totalSize, MINOR_VERSION,
                                           fs, path);
           b = hbr.readBlockData(0, 2173 + HFileBlock.HEADER_SIZE_NO_CHECKSUM +
                                 b.totalChecksumBytes(), -1, pread);
@@ -291,7 +291,7 @@ public class TestHFileBlockCompatibility {
           os.close();
 
           FSDataInputStream is = fs.open(path);
-          HFileBlock.FSReaderV2 hbr = new HFileBlock.FSReaderV2(is, is, algo,
+          HFileBlock.FSReaderV2 hbr = new HFileBlock.FSReaderV2(is, is, algo, null,
               totalSize, MINOR_VERSION, fs, path);
           hbr.setDataBlockEncoder(dataBlockEncoder);
           hbr.setIncludesMemstoreTS(includesMemstoreTS);

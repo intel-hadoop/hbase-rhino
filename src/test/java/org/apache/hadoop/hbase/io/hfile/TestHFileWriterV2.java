@@ -155,11 +155,11 @@ public class TestHFileWriterV2 {
         FixedFileTrailer.readFromStream(fsdis, fileSize);
 
     assertEquals(2, trailer.getMajorVersion());
-    assertEquals(useChecksums?1:0, trailer.getMinorVersion());
+    assertEquals(useChecksums ? HFileReaderV2.MAX_MINOR_VERSION:HFileReaderV2.MIN_MINOR_VERSION, trailer.getMinorVersion());
     assertEquals(entryCount, trailer.getEntryCount());
 
     HFileBlock.FSReader blockReader =
-        new HFileBlock.FSReaderV2(fsdis,fsdis, compressAlgo, fileSize,
+        new HFileBlock.FSReaderV2(fsdis,fsdis, compressAlgo, null, fileSize,
             this.useChecksums?HFileReaderV2.MAX_MINOR_VERSION:HFileReaderV2.MIN_MINOR_VERSION,
             null, null);
     // Comparator class name is stored in the trailer in version 2.

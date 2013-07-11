@@ -65,6 +65,7 @@ public class HalfStoreFileReader extends StoreFile.Reader {
    * @param cacheConf
    * @param r original reference file (contains top or bottom)
    * @param preferredEncodingInCache
+   * @param cryptoContext
    * @throws IOException
    */
   public HalfStoreFileReader(final FileSystem fs, final Path p,
@@ -89,6 +90,7 @@ public class HalfStoreFileReader extends StoreFile.Reader {
    * @param cacheConf
    * @param r original reference file (contains top or bottom)
    * @param preferredEncodingInCache
+   * @param cryptoContext
    * @throws IOException
    */
   public HalfStoreFileReader(final FileSystem fs, final Path p, final HFileLink link,

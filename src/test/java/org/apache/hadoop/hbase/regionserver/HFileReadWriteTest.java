@@ -468,7 +468,7 @@ public class HFileReadWriteTest {
     // We are passing the ROWCOL Bloom filter type, but StoreFile will still
     // use the Bloom filter type specified in the HFile.
     return new StoreFile(fs, filePath, conf, cacheConf,
-        StoreFile.BloomType.ROWCOL, dataBlockEncoder);
+        StoreFile.BloomType.ROWCOL, dataBlockEncoder, null);
   }
 
   public static int charToHex(int c) {

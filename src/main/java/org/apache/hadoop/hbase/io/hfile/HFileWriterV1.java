@@ -35,8 +35,9 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.KeyValue.KeyComparator;
+import org.apache.hadoop.hbase.io.crypto.Encryption;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
-import org.apache.hadoop.hbase.io.hfile.Compression.Algorithm;
+import org.apache.hadoop.hbase.io.hfile.Compression;
 import org.apache.hadoop.hbase.io.hfile.HFile.FileInfo;
 import org.apache.hadoop.hbase.io.hfile.HFile.Writer;
 import org.apache.hadoop.hbase.regionserver.MemStore;
@@ -90,7 +91,8 @@ public class HFileWriterV1 extends AbstractHFileWriter {
     @Override
     public Writer createWriter(FileSystem fs, Path path,
         FSDataOutputStream ostream, int blockSize,
-        Algorithm compressAlgo, HFileDataBlockEncoder dataBlockEncoder,
+        Compression.Algorithm compressAlgo, Encryption.Context cryptoContext,
+        HFileDataBlockEncoder dataBlockEncoder,
         KeyComparator comparator, final ChecksumType checksumType,
         final int bytesPerChecksum, boolean includeMVCCReadpoint) throws IOException {
       // version 1 does not implement checksums
