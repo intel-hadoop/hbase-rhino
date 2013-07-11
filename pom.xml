@@ -2090,7 +2090,7 @@
     </profile>
 
     <!--
-      profile for building against Hadoop 2.0.0-alpha. Activate using:
+      profile for building against Hadoop 2.0.5-alpha. Activate using:
        mvn -Dhadoop.profile=2.0
     -->
     <profile>
@@ -2102,7 +2102,7 @@
         </property>
       </activation>
       <properties>
-        <hadoop.version>2.0.0-alpha</hadoop.version>
+        <hadoop.version>2.0.5-alpha</hadoop.version>
         <slf4j.version>1.6.1</slf4j.version>
       </properties>
       <dependencies>
