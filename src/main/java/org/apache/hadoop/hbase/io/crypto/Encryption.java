@@ -69,7 +69,7 @@ public abstract class Encryption {
   }
 
   public static Context newContext(Configuration conf) {
-    return new Context(new Configuration(conf));
+    return new Context(new HBaseConfiguration(conf));
   }
 
   public static class Context implements Configurable {
