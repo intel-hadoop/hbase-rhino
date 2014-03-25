@@ -232,6 +232,9 @@ public class HMaster extends HRegionServer implements MasterServices, Server {
   public static class RedirectServlet extends HttpServlet {
     private static final long serialVersionUID = 2894774810058302472L;
     private static int regionServerInfoPort;
+  
+  private static final String HBASE_SECURITY_CONF_KEY =
+      "hbase.security.authentication";
 
     @Override
     public void doGet(HttpServletRequest request,

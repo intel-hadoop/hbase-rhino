@@ -389,6 +389,11 @@ public class HRegionServer extends HasThread implements
   final ServerNonceManager nonceManager;
 
   private UserProvider userProvider;
+  
+  private String ZK_AUTH_KEYSTORE_KEY;
+  private String ZK_AUTH_PRINCIPAL_KEY;
+  private String RS_AUTH_KEYSTORE_KEY;
+  private String RS_AUTH_PRINCIPAL_KEY;
 
   protected final RSRpcServices rpcServices;
 
@@ -443,16 +448,27 @@ public class HRegionServer extends HasThread implements
 
     rpcServices = createRpcServices();
     this.startcode = System.currentTimeMillis();
-    String hostName = rpcServices.isa.getHostName();
+    
+    if("tokenauth".equalsIgnoreCase(conf.get("hbase.security.authentication"))){
+      this.ZK_AUTH_KEYSTORE_KEY="hbase.zookeeper.client.authn.file";
+      this.ZK_AUTH_PRINCIPAL_KEY="hbase.zookeeper.client.tokenauth.principal";
+      this.RS_AUTH_KEYSTORE_KEY="hbase.regionserver.authn.file";
+      this.RS_AUTH_PRINCIPAL_KEY="hbase.regionserver.tokenauth.principal";
+    }
+    else{
+      this.ZK_AUTH_KEYSTORE_KEY="hbase.zookeeper.client.keytab.file";
+      "hbase.zookeeper.client.kerberos.principal", this.isa.getHostName());
+      this.RS_AUTH_KEYSTORE_KEY="hbase.regionserver.keytab.file";
+      this.RS_AUTH_PRINCIPAL_KEY="hbase.regionserver.kerberos.principal";
+    }
+	
+	String hostName = rpcServices.isa.getHostName();
     serverName = ServerName.valueOf(hostName, rpcServices.isa.getPort(), startcode);
     this.distributedLogReplay = HLogSplitter.isDistributedLogReplay(this.conf);
-
-    // login the zookeeper client principal (if using security)
-    ZKUtil.loginClient(this.conf, "hbase.zookeeper.client.keytab.file",
-      "hbase.zookeeper.client.kerberos.principal", hostName);
-    // login the server principal (if using secure Hadoop)
+	
+    // login the zookeeper client principal
+	// TODO: TokenAuth
     login(userProvider, hostName);
-
     regionServerAccounting = new RegionServerAccounting();
     cacheConfig = new CacheConfig(conf);
     uncaughtExceptionHandler = new UncaughtExceptionHandler() {

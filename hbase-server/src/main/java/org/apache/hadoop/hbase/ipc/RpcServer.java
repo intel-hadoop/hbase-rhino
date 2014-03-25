@@ -55,6 +55,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import javax.security.auth.callback.CallbackHandler;
 import javax.security.sasl.Sasl;
 import javax.security.sasl.SaslException;
 import javax.security.sasl.SaslServer;
@@ -108,6 +109,10 @@ import org.apache.hadoop.security.authorize.ProxyUsers;
 import org.apache.hadoop.security.authorize.ServiceAuthorizationManager;
 import org.apache.hadoop.security.token.SecretManager;
 import org.apache.hadoop.security.token.SecretManager.InvalidToken;
+import org.apache.hadoop.security.tokenauth.DefaultTokenAuthCallbackHandler;
+import org.apache.hadoop.security.tokenauth.secrets.Secrets;
+import org.apache.hadoop.security.tokenauth.token.TokenFactory;
+import org.apache.hadoop.security.tokenauth.token.TokenUtils;
 import org.apache.hadoop.security.token.TokenIdentifier;
 import org.apache.hadoop.util.StringUtils;
 import org.htrace.TraceInfo;
@@ -1255,7 +1260,26 @@ public class RpcServer implements RpcServerInterface {
         }
         ugi.addTokenIdentifier(tokenId);
         return ugi;
-      } else {
+      } else if(AuthMethod.TOKENAUTH==authMethod){
+        /* authorizedId is the access token */
+        UserGroupInformation ugi = null;
+        byte[] accessToken = TokenUtils.decodeToken(authorizedId);
+        try {
+          Secrets validationSecrets = 
+              UserGroupInformation.getLoginUser().getValidationSecrets();
+          if(validationSecrets == null) {
+            throw new AccessControlException("Can't find a validation secrets");
+          }
+          org.apache.hadoop.security.tokenauth.token.Token
+              token = TokenFactory.get().createAccessToken(validationSecrets, accessToken);
+          ugi = UserGroupInformation.createRemoteUser(token.getPrincipal().getName());
+          ugi.addToken(token);
+        } catch (IOException e) {
+          throw new AccessControlException(e);
+        }
+        
+        return ugi;        
+      }else {
         return UserGroupInformation.createRemoteUser(authorizedId);
       }
     }
@@ -1288,10 +1312,29 @@ public class RpcServer implements RpcServerInterface {
                   SaslUtil.SASL_PROPS, new SaslDigestCallbackHandler(
                       secretManager, this));
               break;
-            default:
+            case TOKENAUTH:
               UserGroupInformation current = UserGroupInformation
               .getCurrentUser();
               String fullName = current.getUserName();
+              if (LOG.isDebugEnabled()) {
+                LOG.debug("Tokenauth principal name is " + fullName);
+              }
+              current.doAs(new PrivilegedExceptionAction<Object>() {
+                @Override
+                public Object run() throws SaslException {
+                  CallbackHandler saslCallback=new DefaultTokenAuthCallbackHandler();
+                  LOG.info("Creating SASL (TokenAuth) server.");
+                  saslServer = Sasl.createSaslServer(AuthMethod.TOKENAUTH
+                      .getMechanismName(),null, SaslUtil.SASL_DEFAULT_REALM,
+                      SaslUtil.SASL_PROPS, saslCallback);
+                  return null;
+                }
+              });
+              break;
+            default:
+              current = UserGroupInformation
+              .getCurrentUser();
+              fullName = current.getUserName();
               if (LOG.isDebugEnabled()) {
                 LOG.debug("Kerberos principal name is " + fullName);
               }
@@ -1574,7 +1617,7 @@ public class RpcServer implements RpcServerInterface {
                 + protocolUser + ")");
           } else {
             // Effective user can be different from authenticated user
-            // for simple auth or kerberos auth
+            // for simple auth, kerberos auth or token auth
             // The user is the real user. Now we create a proxy user
             UserGroupInformation realUser = user;
             user = UserGroupInformation.createProxyUser(protocolUser
@@ -1754,7 +1797,7 @@ public class RpcServer implements RpcServerInterface {
       try {
         // If auth method is DIGEST, the token was obtained by the
         // real user for the effective user, therefore not required to
-        // authorize real user. doAs is allowed only for simple or kerberos
+        // authorize real user. doAs is allowed only for simple, tokenauth or kerberos
         // authentication
         if (user != null && user.getRealUser() != null
             && (authMethod != AuthMethod.DIGEST)) {

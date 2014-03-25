@@ -208,13 +208,24 @@ public abstract class User {
   }
 
   /**
-   * Returns whether or not Kerberos authentication is configured for Hadoop.
+   * Returns whether or not Kerberos or token based authentication is configured 
+   * for Hadoop.
    * For non-secure Hadoop, this always returns <code>false</code>.
    * For secure Hadoop, it will return the value from
    * {@code UserGroupInformation.isSecurityEnabled()}.
    */
   public static boolean isSecurityEnabled() {
     return SecureHadoopUser.isSecurityEnabled();
+  }
+  
+  /**
+   * Returns whether or not token based authentication is configured for Hadoop.
+   * For non-secure Hadoop, this always returns <code>false</code>.
+   * For secure Hadoop, it will return the value from
+   * {@code UserGroupInformation.isTokenAuthEnabled()}.
+   */
+  public static boolean isTokenAuthEnabled(){
+    return SecureHadoopUser.isTokenAuthEnabled();
   }
 
   /**
@@ -223,8 +234,10 @@ public abstract class User {
    * recommended that secure HBase should run on secure HDFS.
    */
   public static boolean isHBaseSecurityEnabled(Configuration conf) {
-    return "kerberos".equalsIgnoreCase(conf.get(HBASE_SECURITY_CONF_KEY));
+    return ("kerberos".equalsIgnoreCase(conf.get(HBASE_SECURITY_CONF_KEY)) || "tokenauth"
+        .equalsIgnoreCase(conf.get(HBASE_SECURITY_CONF_KEY)));
   }
+  
 
   /* Concrete implementations */
 
@@ -365,6 +378,29 @@ public abstract class User {
             "Error creating secure test user");
       }
     }
+    
+    /**
+     * Obtain credentials for the current process using the configured
+     * authentication file and principal.
+     * @see User#login(org.apache.hadoop.conf.Configuration, String, String, String)
+     *
+     * @param conf the Configuration to use
+     * @param fileConfKey Configuration property key used to store the path
+     * to the authentication file
+     * @param principalConfKey Configuration property key used to store the
+     * principal name to login as
+     * @param localhost the local hostname
+     */
+    public static void login(Configuration conf, String fileConfKey,
+        String principalConfKey, String localhost) throws IOException {
+      if ("kerberos".equalsIgnoreCase(conf.get(HBASE_SECURITY_CONF_KEY))&&isSecurityEnabled()) {
+        SecureHadoopUser.loginFromKerberos(conf, fileConfKey, principalConfKey, localhost);
+      }
+      else if("tokenauth".equalsIgnoreCase(conf.get(HBASE_SECURITY_CONF_KEY))&&isTokenAuthEnabled()) {
+        SecureHadoopUser.loginFromTokenAuth(conf, fileConfKey, principalConfKey, localhost);
+      }
+        
+    }
 
     /**
      * Obtain credentials for the current process using the configured
@@ -378,29 +414,63 @@ public abstract class User {
      * principal name to login as
      * @param localhost the local hostname
      */
-    public static void login(Configuration conf, String fileConfKey,
+    public static void loginFromKerberos(Configuration conf, String fileConfKey,
         String principalConfKey, String localhost) throws IOException {
-      if (isSecurityEnabled()) {
-        // check for SecurityUtil class
-        try {
-          Class c = Class.forName("org.apache.hadoop.security.SecurityUtil");
-          Class[] types = new Class[]{
-              Configuration.class, String.class, String.class, String.class };
-          Object[] args = new Object[]{
-              conf, fileConfKey, principalConfKey, localhost };
-          Methods.call(c, null, "login", types, args);
-        } catch (ClassNotFoundException cnfe) {
-          throw new RuntimeException("Unable to login using " +
-              "org.apache.hadoop.security.SecurityUtil.login(). SecurityUtil class " +
-              "was not found!  Is this a version of secure Hadoop?", cnfe);
-        } catch (IOException ioe) {
-          throw ioe;
-        } catch (RuntimeException re) {
-          throw re;
-        } catch (Exception e) {
-          throw new UndeclaredThrowableException(e,
-              "Unhandled exception in User.login()");
-        }
+      // check for SecurityUtil class
+      try {
+        Class c = Class.forName("org.apache.hadoop.security.SecurityUtil");
+        Class[] types = new Class[]{
+            Configuration.class, String.class, String.class, String.class };
+        Object[] args = new Object[]{
+            conf, fileConfKey, principalConfKey, localhost };
+        Methods.call(c, null, "login", types, args);
+      } catch (ClassNotFoundException cnfe) {
+        throw new RuntimeException("Unable to login using " +
+            "org.apache.hadoop.security.SecurityUtil.login(). SecurityUtil class " +
+            "was not found!  Is this a version of secure Hadoop?", cnfe);
+      } catch (IOException ioe) {
+        throw ioe;
+      } catch (RuntimeException re) {
+        throw re;
+      } catch (Exception e) {
+        throw new UndeclaredThrowableException(e,
+            "Unhandled exception in User.loginFromKerberos()");
+      }
+    }
+    
+    /**
+     * Obtain credentials for the current process using the configured
+     * token based authentication file and principal.
+     * @see User#login(org.apache.hadoop.conf.Configuration, String, String, String)
+     *
+     * @param conf the Configuration to use
+     * @param fileConfKey Configuration property key used to store the path
+     * to the token base file
+     * @param principalConfKey Configuration property key used to store the
+     * principal name to login as
+     * @param localhost the local hostname
+     */
+    public static void loginFromTokenAuth(Configuration conf, String fileConfKey,
+        String principalConfKey, String localhost) throws IOException {
+      // check for SecurityUtil class
+      try {
+        Class c = Class.forName("org.apache.hadoop.security.SecurityUtil");
+        Class[] types = new Class[]{
+            Configuration.class, String.class, String.class, String.class };
+        Object[] args = new Object[]{
+            conf, fileConfKey, principalConfKey, localhost };
+        Methods.call(c, null, "tokenAuthLogin", types, args);
+      } catch (ClassNotFoundException cnfe) {
+        throw new RuntimeException("Unable to login using " +
+            "org.apache.hadoop.security.SecurityUtil.tokenAuthLogin(). SecurityUtil " +
+            "class was not found!  Is this a version of secure Hadoop?", cnfe);
+      } catch (IOException ioe) {
+        throw ioe;
+      } catch (RuntimeException re) {
+        throw re;
+      } catch (Exception e) {
+        throw new UndeclaredThrowableException(e,
+            "Unhandled exception in User.loginFromTokenAuth()");
       }
     }
 
@@ -415,6 +485,20 @@ public abstract class User {
       } catch (Exception e) {
         throw new UndeclaredThrowableException(e,
             "Unexpected exception calling UserGroupInformation.isSecurityEnabled()");
+      }
+    }
+    
+    /**
+     * Returns the result of {@code UserGroupInformation.isTokenAuthEnabled()}.
+     */
+    public static boolean isTokenAuthEnabled() {
+      try {
+        return ((Boolean)callStatic("isTokenAuthEnabled"));
+      } catch (RuntimeException re) {
+        throw re;
+      } catch (Exception e) {
+        throw new UndeclaredThrowableException(e,
+            "Unexpected exception calling UserGroupInformation.isTokenAuthEnabled()");
       }
     }
   }
