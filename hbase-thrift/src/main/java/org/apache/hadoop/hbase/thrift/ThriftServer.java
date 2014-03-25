@@ -57,6 +57,8 @@ public class ThriftServer {
   static final String COMPACT_OPTION = "compact";
   static final String FRAMED_OPTION = "framed";
   static final String PORT_OPTION = "port";
+  private static String AUTH_KEYSTORE_KEY;
+  private static String AUTH_PRINCIPLE_KEY;
 
   private static final String DEFAULT_BIND_ADDR = "0.0.0.0";
   private static final int DEFAULT_LISTEN_PORT = 9090;
@@ -72,6 +74,14 @@ public class ThriftServer {
 
   public ThriftServer(Configuration conf) {
     this.conf = HBaseConfiguration.create(conf);
+    if("tokenauth".equalsIgnoreCase(conf.get("hbase.security.authentication"))){
+      AUTH_KEYSTORE_KEY="hbase.thrift.authn.file";
+      AUTH_PRINCIPLE_KEY="hbase.thrift.tokenauth.principal";
+    }
+    else{
+      AUTH_KEYSTORE_KEY="hbase.thrift.keytab.file";
+      AUTH_PRINCIPLE_KEY="hbase.thrift.kerberos.principal";
+    }
   }
 
   private static void printUsageAndExit(Options options, int exitCode)
@@ -100,7 +110,7 @@ public class ThriftServer {
             conf.get("hbase.thrift.dns.interface", "default"),
             conf.get("hbase.thrift.dns.nameserver", "default")));
       userProvider
-          .login("hbase.thrift.keytab.file", "hbase.thrift.kerberos.principal", machineName);
+          .login(AUTH_KEYSTORE_KEY, AUTH_PRINCIPLE_KEY, machineName);
     }
 
      serverRunner = new ThriftServerRunner(conf);
