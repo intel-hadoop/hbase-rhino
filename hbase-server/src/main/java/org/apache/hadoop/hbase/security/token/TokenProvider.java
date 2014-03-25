@@ -83,7 +83,9 @@ public class TokenProvider implements AuthenticationProtos.AuthenticationService
     }
     if (authMethod != AuthenticationMethod.KERBEROS
         && authMethod != AuthenticationMethod.KERBEROS_SSL
-        && authMethod != AuthenticationMethod.CERTIFICATE) {
+        && authMethod != AuthenticationMethod.CERTIFICATE
+        && authMethod != AuthenticationMethod.TOKENAUTH
+        && authMethod != AuthenticationMethod.TOKENAUTH_SSL) {
       return false;
     }
     return true;

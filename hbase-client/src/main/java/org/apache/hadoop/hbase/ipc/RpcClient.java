@@ -52,6 +52,7 @@ import org.apache.hadoop.hbase.security.AuthMethod;
 import org.apache.hadoop.hbase.security.HBaseSaslRpcClient;
 import org.apache.hadoop.hbase.security.SaslUtil.QualityOfProtection;
 import org.apache.hadoop.hbase.security.SecurityInfo;
+import org.apache.hadoop.hbase.security.TokenAuthenticationInfo;
 import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.security.UserProvider;
 import org.apache.hadoop.hbase.security.token.AuthenticationTokenSelector;
@@ -387,6 +388,7 @@ public class RpcClient {
     private String serverPrincipal;  // server's krb5 principal name
     private AuthMethod authMethod; // authentication method
     private boolean useSasl;
+    private boolean tokenAuthEnabled;
     private Token<? extends TokenIdentifier> token;
     private HBaseSaslRpcClient saslRpcClient;
     private int reloginMaxBackoff; // max pause before relogin on sasl failure
@@ -517,8 +519,16 @@ public class RpcClient {
       this.codec = codec;
       this.compressor = compressor;
 
+      this.tokenAuthEnabled=("tokenauth".equalsIgnoreCase(conf.get("hbase.security.authentication")))?true:false;
+      SecurityInfo securityInfo;
+      
       UserGroupInformation ticket = remoteId.getTicket().getUGI();
-      SecurityInfo securityInfo = SecurityInfo.getInfo(remoteId.getServiceName());
+      if(tokenAuthEnabled){
+        securityInfo=TokenAuthenticationInfo.getInfo(remoteId.getServiceName());
+      }
+      else{
+        securityInfo=SecurityInfo.getInfo(remoteId.getServiceName());
+      }
       this.useSasl = userProvider.isHBaseSecurityEnabled();
       if (useSasl && securityInfo != null) {
         AuthenticationProtos.TokenIdentifier.Kind tokenKind = securityInfo.getTokenKind();
@@ -549,7 +559,9 @@ public class RpcClient {
         authMethod = AuthMethod.SIMPLE;
       } else if (token != null) {
         authMethod = AuthMethod.DIGEST;
-      } else {
+      } else if("tokenauth".equalsIgnoreCase(conf.get("hbase.security.authentication"))){
+        authMethod=AuthMethod.TOKENAUTH;
+      }else{
         authMethod = AuthMethod.KERBEROS;
       }
 
@@ -594,7 +606,7 @@ public class RpcClient {
         return null;
       }
       UserInformation.Builder userInfoPB = UserInformation.newBuilder();
-      if (authMethod == AuthMethod.KERBEROS) {
+      if (authMethod == AuthMethod.KERBEROS||authMethod==AuthMethod.TOKENAUTH) {
         // Send effective user for Kerberos auth
         userInfoPB.setEffectiveUser(ugi.getUserName());
       } else if (authMethod == AuthMethod.SIMPLE) {
@@ -842,7 +854,10 @@ public class RpcClient {
               LOG.debug("Exception encountered while connecting to " +
                   "the server : " + ex);
               //try re-login
-              if (UserGroupInformation.isLoginKeytabBased()) {
+              if(UserGroupInformation.isTokenAuthEnabled()){
+                UserGroupInformation.getLoginUser().reloginForTokenAuth();
+              }
+              else if (UserGroupInformation.isLoginKeytabBased()) {
                 UserGroupInformation.getLoginUser().reloginFromKeytab();
               } else {
                 UserGroupInformation.getLoginUser().reloginFromTicketCache();
@@ -920,7 +935,7 @@ public class RpcClient {
             final InputStream in2 = inStream;
             final OutputStream out2 = outStream;
             UserGroupInformation ticket = remoteId.getTicket().getUGI();
-            if (authMethod == AuthMethod.KERBEROS) {
+            if (authMethod == AuthMethod.KERBEROS||authMethod==AuthMethod.TOKENAUTH) {
               if (ticket != null && ticket.getRealUser() != null) {
                 ticket = ticket.getRealUser();
               }

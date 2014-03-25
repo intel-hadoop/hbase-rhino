@@ -165,8 +165,14 @@ public class HMasterCommandLine extends ServerCommandLine {
         zooKeeperCluster.setDefaultClientPort(zkClientPort);
 
         // login the zookeeper server principal (if using security)
+        if("tokenauth".equalsIgnoreCase(conf.get("hbase.security.authentication"))){
+          ZKUtil.loginServer(conf, "hbase.zookeeper.server.keystore.file",
+            "hbase.zookeeper.server.tokenauth.principal", null);
+        }
+        else{
         ZKUtil.loginServer(conf, "hbase.zookeeper.server.keytab.file",
           "hbase.zookeeper.server.kerberos.principal", null);
+        }
 
         int clientPort = zooKeeperCluster.startup(zkDataPath);
         if (clientPort != zkClientPort) {

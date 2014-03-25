@@ -46,9 +46,13 @@ public interface Constants {
   String CRLF = "\r\n";
 
   String REST_KEYTAB_FILE = "hbase.rest.keytab.file";
+  static final String REST_AUTHN_FILE = "hbase.rest.authn.file";
   String REST_KERBEROS_PRINCIPAL = "hbase.rest.kerberos.principal";
+  static final String REST_TOKENAUTH_PRINCIPAL = "hbase.rest.tokenauth.principal";
   String REST_AUTHENTICATION_TYPE = "hbase.rest.authentication.type";
   String REST_AUTHENTICATION_PRINCIPAL = "hbase.rest.authentication.kerberos.principal";
+  static final String REST_AUTHENTICATION_TOKENAUTH_PRINCIPAL =
+      "hbase.rest.authentication.tokenauth.principal";
 
   String REST_SSL_ENABLED = "hbase.rest.ssl.enabled";
   String REST_SSL_KEYSTORE_STORE = "hbase.rest.ssl.keystore.store";

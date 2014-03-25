@@ -20,12 +20,15 @@ package org.apache.hadoop.hbase.security;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.WritableUtils;
 import org.apache.hadoop.ipc.RemoteException;
 import org.apache.hadoop.security.SaslInputStream;
 import org.apache.hadoop.security.SaslOutputStream;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.security.token.TokenIdentifier;
+import org.apache.hadoop.security.tokenauth.DefaultTokenAuthCallbackHandler;
+import org.apache.hadoop.security.tokenauth.sasl.SaslTokenAuthClient;
 
 import javax.security.auth.callback.Callback;
 import javax.security.auth.callback.CallbackHandler;
@@ -45,6 +48,8 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.security.Security;
+import java.util.Map;
 
 import com.google.common.annotations.VisibleForTesting;
 
@@ -57,6 +62,12 @@ public class HBaseSaslRpcClient {
 
   private final SaslClient saslClient;
   private final boolean fallbackAllowed;
+  private final Configuration configuration;
+  
+  static{
+    Security.addProvider(new SaslTokenAuthClient.SecurityProvider());
+  }
+
   /**
    * Create a HBaseSaslRpcClient for an authentication method
    * 
@@ -71,8 +82,8 @@ public class HBaseSaslRpcClient {
    * @throws IOException
    */
   public HBaseSaslRpcClient(AuthMethod method,
-      Token<? extends TokenIdentifier> token, String serverPrincipal, boolean fallbackAllowed)
-      throws IOException {
+      Token<? extends TokenIdentifier> token, String serverPrincipal, boolean fallbackAllowed, Configuration configuration) throws IOException{
+    this.configuration=configuration;
     this(method, token, serverPrincipal, fallbackAllowed, "authentication"); 
   }
   /**
@@ -125,11 +136,40 @@ public class HBaseSaslRpcClient {
           new String[] { AuthMethod.KERBEROS.getMechanismName() },
           names[0], names[1]);
       break;
+    case TOKENAUTH:
+      if(LOG.isDebugEnabled()){
+        LOG.debug("Creating SASL " + AuthMethod.TOKENAUTH.getMechanismName()
+                + " client. Server's principal name is "
+                + serverPrincipal);
+      }
+      LOG.info("Server principal: "+serverPrincipal);
+      if(serverPrincipal==null||serverPrincipal.length()==0){
+        throw new IOException("Failed to specify server's principal name");
+      }
+      CallbackHandler saslCallback=new DefaultTokenAuthCallbackHandler(configuration);
+      saslClient =
+          createTokenAuthClient(new String[] { AuthMethod.TOKENAUTH.getMechanismName() }, serverPrincipal,
+            serverPrincipal, SaslUtil.SASL_DEFAULT_REALM,saslCallback);
+      break;
     default:
       throw new IOException("Unknown authentication method " + method);
     }
     if (saslClient == null)
       throw new IOException("Unable to find SASL client implementation");
+  }
+  
+  /**
+   * Create a HBaseSaslRpcClient for an authentication method
+   * 
+   * @param method
+   *          the requested authentication method
+   * @param token
+   *          token to use if needed by the authentication method
+   */
+  public HBaseSaslRpcClient(AuthMethod method,
+      Token<? extends TokenIdentifier> token, String serverPrincipal, boolean fallbackAllowed)
+      throws IOException {
+    this(method,token,serverPrincipal,fallbackAllowed,null);
   }
 
   protected SaslClient createDigestSaslClient(String[] mechanismNames, 
@@ -143,6 +183,11 @@ public class HBaseSaslRpcClient {
       String userFirstPart, String userSecondPart) throws IOException {
     return Sasl.createSaslClient(mechanismNames, null, userFirstPart, 
         userSecondPart, SaslUtil.SASL_PROPS, null);
+  }
+  
+  protected SaslClient createTokenAuthClient(String[] mechanismNames,String authorizationId, String protocol, String serverName,
+      CallbackHandler cbh) throws IOException {
+    return Sasl.createSaslClient(mechanismNames, authorizationId, protocol, serverName, SaslUtil.SASL_PROPS, cbh);
   }
 
   private static void readStatus(DataInputStream inStream) throws IOException {

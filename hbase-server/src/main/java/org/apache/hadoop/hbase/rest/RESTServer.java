@@ -66,6 +66,9 @@ import com.sun.jersey.spi.container.servlet.ServletContainer;
  */
 @InterfaceAudience.Private
 public class RESTServer implements Constants {
+  private static String REST_AUTH_PRINCIPAL;
+  private static String REST_AUTH_KEYSTORE;
+  private static String REST_AUTH_TYPE;
 
   private static void printUsageAndExit(Options options, int exitCode) {
     HelpFormatter formatter = new HelpFormatter();
@@ -93,13 +96,24 @@ public class RESTServer implements Constants {
       String machineName = Strings.domainNamePointerToHostName(
         DNS.getDefaultHost(conf.get(REST_DNS_INTERFACE, "default"),
           conf.get(REST_DNS_NAMESERVER, "default")));
-      String keytabFilename = conf.get(REST_KEYTAB_FILE);
-      Preconditions.checkArgument(keytabFilename != null && !keytabFilename.isEmpty(),
-        REST_KEYTAB_FILE + " should be set if security is enabled");
-      String principalConfig = conf.get(REST_KERBEROS_PRINCIPAL);
+      if ("tokenauth".equalsIgnoreCase(conf.get("hbase.security.authentication"))) {
+        REST_AUTH_PRINCIPAL=REST_TOKENAUTH_PRINCIPAL;
+        REST_AUTH_KEYSTORE=REST_AUTHN_FILE;
+        REST_AUTH_TYPE="token based authentication";
+      } else {  // Kerberos
+        REST_AUTH_PRINCIPAL=REST_KERBEROS_PRINCIPAL;
+        REST_AUTH_KEYSTORE=REST_KEYTAB_FILE;
+        REST_AUTH_TYPE="kerberos authentication";
+      }
+      String keystoreFilename = conf.get(REST_AUTH_KEYSTORE);
+      Preconditions.checkArgument(keystoreFilename != null && !keystoreFilename.isEmpty(),
+        REST_AUTH_KEYSTORE + " should be set if "+REST_AUTH_TYPE+" is enabled");
+      String principalConfig;   
+      principalConfig = conf.get(REST_AUTH_PRINCIPAL);
       Preconditions.checkArgument(principalConfig != null && !principalConfig.isEmpty(),
-        REST_KERBEROS_PRINCIPAL + " should be set if security is enabled");
-      userProvider.login(REST_KEYTAB_FILE, REST_KERBEROS_PRINCIPAL, machineName);
+        REST_AUTH_PRINCIPAL + " should be set if "+REST_AUTH_TYPE+" is enabled");
+      userProvider.login(REST_AUTH_KEYSTORE, REST_AUTH_PRINCIPAL, machineName);
+      
       if (conf.get(REST_AUTHENTICATION_TYPE) != null) {
         containerClass = RESTServletContainer.class;
         authFilter = new FilterHolder();
