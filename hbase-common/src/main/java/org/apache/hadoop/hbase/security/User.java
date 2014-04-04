@@ -33,6 +33,7 @@ import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.Token;
+import org.apache.hadoop.hbase.security.AuthenticationUtil;
 
 /**
  * Wrapper to abstract out usage of user and group information in HBase.
@@ -234,8 +235,7 @@ public abstract class User {
    * recommended that secure HBase should run on secure HDFS.
    */
   public static boolean isHBaseSecurityEnabled(Configuration conf) {
-    return ("kerberos".equalsIgnoreCase(conf.get(HBASE_SECURITY_CONF_KEY)) || "tokenauth"
-        .equalsIgnoreCase(conf.get(HBASE_SECURITY_CONF_KEY)));
+    return AuthenticationUtil.isSecurityEnabled(conf);
   }
   
 
@@ -393,10 +393,10 @@ public abstract class User {
      */
     public static void login(Configuration conf, String fileConfKey,
         String principalConfKey, String localhost) throws IOException {
-      if ("kerberos".equalsIgnoreCase(conf.get(HBASE_SECURITY_CONF_KEY))&&isSecurityEnabled()) {
+      if (AuthenticationUtil.isKerberosEnabled(conf)&&isSecurityEnabled()) {
         SecureHadoopUser.loginFromKerberos(conf, fileConfKey, principalConfKey, localhost);
       }
-      else if("tokenauth".equalsIgnoreCase(conf.get(HBASE_SECURITY_CONF_KEY))&&isTokenAuthEnabled()) {
+      else if(AuthenticationUtil.isTokenAuthEnabled(conf)&&isTokenAuthEnabled()) {
         SecureHadoopUser.loginFromTokenAuth(conf, fileConfKey, principalConfKey, localhost);
       }
         

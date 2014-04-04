@@ -49,7 +49,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.security.Security;
-import java.util.Map;
 
 import com.google.common.annotations.VisibleForTesting;
 
@@ -62,12 +61,19 @@ public class HBaseSaslRpcClient {
 
   private final SaslClient saslClient;
   private final boolean fallbackAllowed;
-  private final Configuration configuration;
-  
+
   static{
     Security.addProvider(new SaslTokenAuthClient.SecurityProvider());
   }
-
+ 
+  /**
+   * Create a HBaseSaslRpcClient for an authentication method
+   * 
+   * @param method
+   *          the requested authentication method
+   * @param token
+   *          token to use if needed by the authentication method
+   */
   /**
    * Create a HBaseSaslRpcClient for an authentication method
    * 
@@ -82,8 +88,8 @@ public class HBaseSaslRpcClient {
    * @throws IOException
    */
   public HBaseSaslRpcClient(AuthMethod method,
-      Token<? extends TokenIdentifier> token, String serverPrincipal, boolean fallbackAllowed, Configuration configuration) throws IOException{
-    this.configuration=configuration;
+      Token<? extends TokenIdentifier> token, String serverPrincipal, boolean fallbackAllowed)
+      throws IOException {
     this(method, token, serverPrincipal, fallbackAllowed, "authentication"); 
   }
   /**
@@ -146,7 +152,7 @@ public class HBaseSaslRpcClient {
       if(serverPrincipal==null||serverPrincipal.length()==0){
         throw new IOException("Failed to specify server's principal name");
       }
-      CallbackHandler saslCallback=new DefaultTokenAuthCallbackHandler(configuration);
+      CallbackHandler saslCallback=new DefaultTokenAuthCallbackHandler(new Configuration());
       saslClient =
           createTokenAuthClient(new String[] { AuthMethod.TOKENAUTH.getMechanismName() }, serverPrincipal,
             serverPrincipal, SaslUtil.SASL_DEFAULT_REALM,saslCallback);
@@ -156,20 +162,6 @@ public class HBaseSaslRpcClient {
     }
     if (saslClient == null)
       throw new IOException("Unable to find SASL client implementation");
-  }
-  
-  /**
-   * Create a HBaseSaslRpcClient for an authentication method
-   * 
-   * @param method
-   *          the requested authentication method
-   * @param token
-   *          token to use if needed by the authentication method
-   */
-  public HBaseSaslRpcClient(AuthMethod method,
-      Token<? extends TokenIdentifier> token, String serverPrincipal, boolean fallbackAllowed)
-      throws IOException {
-    this(method,token,serverPrincipal,fallbackAllowed,null);
   }
 
   protected SaslClient createDigestSaslClient(String[] mechanismNames, 

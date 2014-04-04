@@ -47,6 +47,7 @@ import org.apache.hadoop.hbase.exceptions.DeserializationException;
 import org.apache.hadoop.hbase.protobuf.ProtobufUtil;
 import org.apache.hadoop.hbase.protobuf.generated.ZooKeeperProtos;
 import org.apache.hadoop.hbase.protobuf.generated.ZooKeeperProtos.RegionStoreSequenceIds;
+import org.apache.hadoop.hbase.security.AuthenticationUtil;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.ExceptionUtil;
 import org.apache.hadoop.hbase.util.Threads;
@@ -146,20 +147,20 @@ public class ZKUtil {
    * </p>
    *
    * @param conf The configuration data to use
-   * @param keystoreFileKey Property key used to configure the path to the credential file
+   * @param authenticationFileKey Property key used to configure the path to the credential file
    * @param userNameKey Property key used to configure the login principal
    * @param hostname Current hostname to use in any credentials
    * @throws IOException underlying exception from SecurityUtil.login() call
    */
-  public static void loginServer(Configuration conf, String keystoreFileKey,
+  public static void loginServer(Configuration conf, String authenticationFileKey,
       String userNameKey, String hostname) throws IOException {
-    if("tokenauth".equalsIgnoreCase(conf.get(HBASE_SECURITY_CONF_KEY))){
-      login(conf, keystoreFileKey, userNameKey, hostname,
+    if(AuthenticationUtil.isTokenAuthEnabled(conf)){
+      login(conf, authenticationFileKey, userNameKey, hostname,
         ZooKeeperSaslClient.LOGIN_CONTEXT_NAME_KEY,
-        TokenAuthJaasConfiguration.SERVER_AUTHN_TOKENAUTH_CONFIG_NAME);
+        JaasTokenAuthConfiguration.SERVER_AUTHN_TOKENAUTH_CONFIG_NAME);
     }
     else{
-    login(conf, keystoreFileKey, userNameKey, hostname,
+    login(conf, authenticationFileKey, userNameKey, hostname,
           ZooKeeperSaslServer.LOGIN_CONTEXT_NAME_KEY,
           JaasConfiguration.SERVER_KEYTAB_KERBEROS_CONFIG_NAME);
     }
@@ -174,19 +175,19 @@ public class ZKUtil {
    * </p>
    *
    * @param conf The configuration data to use
-   * @param keystoreFileKey Property key used to configure the path to the credential file
+   * @param authenticationFileKey Property key used to configure the path to the credential file
    * @param userNameKey Property key used to configure the login principal
    * @param hostname Current hostname to use in any credentials
    * @throws IOException underlying exception from SecurityUtil.login() call
    */
-  public static void loginClient(Configuration conf, String keystoreFileKey,
+  public static void loginClient(Configuration conf, String authenticationFileKey,
       String userNameKey, String hostname) throws IOException {
-    if ("tokenauth".equalsIgnoreCase(conf.get(HBASE_SECURITY_CONF_KEY))) {
-      login(conf, keystoreFileKey, userNameKey, hostname,
+    if (AuthenticationUtil.isTokenAuthEnabled(conf)) {
+      login(conf, authenticationFileKey, userNameKey, hostname,
         ZooKeeperSaslClient.LOGIN_CONTEXT_NAME_KEY,
-        TokenAuthJaasConfiguration.CLIENT_KEYSTORE_TOKENAUTH_CONFIG_NAME);
+        JaasTokenAuthConfiguration.CLIENT_AUTHN_TOKENAUTH_CONFIG_NAME);
     } else {
-      login(conf, keystoreFileKey, userNameKey, hostname,
+      login(conf, authenticationFileKey, userNameKey, hostname,
         ZooKeeperSaslClient.LOGIN_CONTEXT_NAME_KEY,
         JaasConfiguration.CLIENT_KEYTAB_KERBEROS_CONFIG_NAME);
     }
@@ -201,14 +202,14 @@ public class ZKUtil {
    * </p>
    *
    * @param conf The configuration data to use
-   * @param keystoreFileKey Property key used to configure the path to the credential file
+   * @param authenticationFileKey Property key used to configure the path to the credential file
    * @param userNameKey Property key used to configure the login principal
    * @param hostname Current hostname to use in any credentials
    * @param loginContextProperty property name to expose the entry name
    * @param loginContextName jaas entry name
    * @throws IOException underlying exception from SecurityUtil.login() call
    */
-  private static void login(Configuration conf, String keystoreFileKey,
+  private static void login(Configuration conf, String authenticationFileKey,
       String userNameKey, String hostname,
       String loginContextProperty, String loginContextName)
       throws IOException {
@@ -221,9 +222,9 @@ public class ZKUtil {
       return;
 
     // No keytab specified, no auth
-    String keystoreFilename = conf.get(keystoreFileKey);
-    if (keystoreFilename == null) {
-      LOG.warn("no keytab specified for: " + keystoreFileKey);
+    String authenticationFilename = conf.get(authenticationFileKey);
+    if (authenticationFilename == null) {
+      LOG.warn("no keytab specified for: " + authenticationFileKey);
       return;
     }
 
@@ -234,7 +235,7 @@ public class ZKUtil {
     // If keyTab is not specified use the Ticket Cache.
     // and set the zookeeper login context name.
     JaasConfiguration jaasConf = new JaasConfiguration(loginContextName,
-        principalName, keystoreFilename);
+        principalName, authenticationFilename);
     javax.security.auth.login.Configuration.setConfiguration(jaasConf);
     System.setProperty(loginContextProperty, loginContextName);
   }
@@ -323,11 +324,11 @@ public class ZKUtil {
   /**
    * A JAAS configuration that defines the login modules that we want to use for login.
    */
-  private static class TokenAuthJaasConfiguration extends javax.security.auth.login.Configuration {
+  private static class JaasTokenAuthConfiguration extends javax.security.auth.login.Configuration {
     private static final String SERVER_AUTHN_TOKENAUTH_CONFIG_NAME =
-      "zookeeper-server-keystore-tokenauth";
-    private static final String CLIENT_KEYSTORE_TOKENAUTH_CONFIG_NAME =
-      "zookeeper-client-keystore-tokenauth";
+      "zookeeper-server-authn-tokenauth";
+    private static final String CLIENT_AUTHN_TOKENAUTH_CONFIG_NAME =
+      "zookeeper-client-authn-tokenauth";
 
     private static final Map<String, String> USER_TOKENAUTH_OPTIONS =
       new HashMap<String,String>();
@@ -338,38 +339,38 @@ public class ZKUtil {
       }
     }
 
-    private static final Map<String,String> KEYSTORE_TOKENAUTH_OPTIONS =
+    private static final Map<String,String> AUTHN_TOKENAUTH_OPTIONS =
       new HashMap<String,String>();
     static {
-      KEYSTORE_TOKENAUTH_OPTIONS.put("doNotPrompt", "true");
-      KEYSTORE_TOKENAUTH_OPTIONS.put("storeKey", "true");
-      KEYSTORE_TOKENAUTH_OPTIONS.put("refreshTokenAuthConfig", "true");
-      KEYSTORE_TOKENAUTH_OPTIONS.putAll(USER_TOKENAUTH_OPTIONS);
+      AUTHN_TOKENAUTH_OPTIONS.put("doNotPrompt", "true");
+      AUTHN_TOKENAUTH_OPTIONS.put("storeKey", "true");
+      AUTHN_TOKENAUTH_OPTIONS.put("refreshTokenAuthConfig", "true");
+      AUTHN_TOKENAUTH_OPTIONS.putAll(USER_TOKENAUTH_OPTIONS);
     }
 
-    private static final AppConfigurationEntry KEYSTORE_TOKENAUTH_LOGIN =
+    private static final AppConfigurationEntry AUTHN_TOKENAUTH_LOGIN =
         new AppConfigurationEntry(TokenAuthLoginModule.class.getName(),
           AppConfigurationEntry.LoginModuleControlFlag.OPTIONAL,
           USER_TOKENAUTH_OPTIONS);
 
-    private static final AppConfigurationEntry[] KEYSTORE_TOKENAUTH_CONF =
-      new AppConfigurationEntry[]{KEYSTORE_TOKENAUTH_LOGIN};
+    private static final AppConfigurationEntry[] AUTHN_TOKENAUTH_CONF =
+      new AppConfigurationEntry[]{AUTHN_TOKENAUTH_LOGIN};
 
     private javax.security.auth.login.Configuration baseConfig;
     private final String loginContextName;
     private final boolean useTicketCache;
-    private final String keystoreFile;
+    private final String authnFile;
     private final String principal;
 
-    public TokenAuthJaasConfiguration(String loginContextName, String principal) {
+    public JaasTokenAuthConfiguration(String loginContextName, String principal) {
       this(loginContextName, principal, null, true);
     }
 
-    public TokenAuthJaasConfiguration(String loginContextName, String principal, String keytabFile) {
+    public JaasTokenAuthConfiguration(String loginContextName, String principal, String keytabFile) {
       this(loginContextName, principal, keytabFile, keytabFile == null || keytabFile.length() == 0);
     }
 
-    private TokenAuthJaasConfiguration(String loginContextName, String principal,
+    private JaasTokenAuthConfiguration(String loginContextName, String principal,
                              String keytabFile, boolean useTicketCache) {
       try {
         this.baseConfig = javax.security.auth.login.Configuration.getConfiguration();
@@ -378,7 +379,7 @@ public class ZKUtil {
       }
       this.loginContextName = loginContextName;
       this.useTicketCache = useTicketCache;
-      this.keystoreFile = keytabFile;
+      this.authnFile = keytabFile;
       this.principal = principal;
       LOG.info("JaasConfiguration loginContextName=" + loginContextName +
                " principal=" + principal + " useTicketCache=" + useTicketCache +
@@ -389,12 +390,12 @@ public class ZKUtil {
     public AppConfigurationEntry[] getAppConfigurationEntry(String appName) {
       if (loginContextName.equals(appName)) {
         if (!useTicketCache) {
-          KEYSTORE_TOKENAUTH_OPTIONS.put("authnFile", keystoreFile);
-          KEYSTORE_TOKENAUTH_OPTIONS.put("useAuthnFile", "true");
+          AUTHN_TOKENAUTH_OPTIONS.put("authnFile", authnFile);
+          AUTHN_TOKENAUTH_OPTIONS.put("useAuthnFile", "true");
         }
-        KEYSTORE_TOKENAUTH_OPTIONS.put("principal", principal);
-        KEYSTORE_TOKENAUTH_OPTIONS.put("useTicketCache", useTicketCache ? "true" : "false");
-        return KEYSTORE_TOKENAUTH_CONF;
+        AUTHN_TOKENAUTH_OPTIONS.put("principal", principal);
+        AUTHN_TOKENAUTH_OPTIONS.put("useTicketCache", useTicketCache ? "true" : "false");
+        return AUTHN_TOKENAUTH_CONF;
       }
       if (baseConfig != null) return baseConfig.getAppConfigurationEntry(appName);
       return(null);
@@ -1045,9 +1046,8 @@ public class ZKUtil {
     }
 
     // Master & RSs uses hbase.zookeeper.client.*
-    return (("kerberos".equalsIgnoreCase(conf.get("hbase.security.authentication")) && conf
-        .get("hbase.zookeeper.client.keytab.file") != null) || ("tokenauth".equalsIgnoreCase(conf
-        .get("hbase.security.authentication")) && conf.get("hbase.zookeeper.client.key.file") != null));
+    return ((AuthenticationUtil.isKerberosEnabled(conf) && conf.get("hbase.zookeeper.client.keytab.file") != null) || (AuthenticationUtil
+        .isTokenAuthEnabled(conf) && conf.get("hbase.zookeeper.client.authn.file") != null));
   }
 
   private static ArrayList<ACL> createACL(ZooKeeperWatcher zkw, String node) {

@@ -768,18 +768,6 @@ possible configurations would overwhelm and obscure the important.
     instance.</description>
   </property>
   <property>
-    <name>hbase.master.authn.file</name>
-    <value></value>
-    <description>Full path to the tokenauth authn file to use for logging in
-    the configured HMaster server principal.</description>
-  </property>
-  <property>
-    <name>hbase.master.tokenauth.principal</name>
-    <value></value>
-    <description>The tokenauth principal name that should be used to run
-    the HMaster process.</description>
-  </property>
-  <property>
     <name>hbase.regionserver.keytab.file</name>
     <value></value>
     <description>Full path to the kerberos keytab file to use for logging in
@@ -799,17 +787,30 @@ possible configurations would overwhelm and obscure the important.
        HBase processes when using token based authentication.  There are no
        default values, included here for documentation purposes -->
   <property>
+    <name>hbase.master.authn.file</name>
+    <value></value>
+    <description>Full path to the tokenauth authentication file to use for
+    logging in the configured HMaster server principal.</description>
+  </property>
+  <property>
+    <name>hbase.master.tokenauth.principal</name>
+    <value></value>
+    <description>The principal name that should be used to run the HMaster
+    process.</description>
+  </property>
+  <property>
     <name>hbase.regionserver.authn.file</name>
     <value></value>
-    <description>Full path to the tokenauth authn file to use for logging in
-    the configured HRegionServer server principal.</description>
+    <description>Full path to the tokenauth authentication file to use for
+    logging in the configured HRegionServer server principal.</description>
   </property>
   <property>
     <name>hbase.regionserver.tokenauth.principal</name>
     <value></value>
-    <description>The tokenauth principal name that should be used to run
-    the HRegionServer process.</description>
+    <description>An entry for this principal must exist in the file
+    specified in hbase.regionserver.keytab.file</description>
   </property>
+  <!-- Additional configuration specific to HBase security -->
   <property>
     <name>hadoop.policy.file</name>
     <value>hbase-policy.xml</value>

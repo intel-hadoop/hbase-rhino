@@ -40,6 +40,7 @@ import org.apache.hadoop.hbase.security.UserProvider;
 import org.apache.hadoop.hbase.util.HttpServerUtil;
 import org.apache.hadoop.hbase.util.Strings;
 import org.apache.hadoop.hbase.util.VersionInfo;
+import org.apache.hadoop.hbase.security.AuthenticationUtil;
 import org.apache.hadoop.net.DNS;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.mortbay.jetty.Connector;
@@ -96,7 +97,7 @@ public class RESTServer implements Constants {
       String machineName = Strings.domainNamePointerToHostName(
         DNS.getDefaultHost(conf.get(REST_DNS_INTERFACE, "default"),
           conf.get(REST_DNS_NAMESERVER, "default")));
-      if ("tokenauth".equalsIgnoreCase(conf.get("hbase.security.authentication"))) {
+      if (AuthenticationUtil.isTokenAuthEnabled(conf)) {
         REST_AUTH_PRINCIPAL=REST_TOKENAUTH_PRINCIPAL;
         REST_AUTH_KEYSTORE=REST_AUTHN_FILE;
         REST_AUTH_TYPE="token based authentication";
