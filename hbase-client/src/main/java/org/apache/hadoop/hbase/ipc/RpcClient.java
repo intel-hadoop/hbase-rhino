@@ -51,9 +51,10 @@ import org.apache.hadoop.hbase.protobuf.generated.TracingProtos.RPCTInfo;
 import org.apache.hadoop.hbase.security.AuthMethod;
 import org.apache.hadoop.hbase.security.HBaseSaslRpcClient;
 import org.apache.hadoop.hbase.security.SecurityInfo;
-import org.apache.hadoop.hbase.security.TokenAuthenticationInfo;
+import org.apache.hadoop.hbase.security.SecurityTokenAuthInfo;
 import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.security.UserProvider;
+import org.apache.hadoop.hbase.security.AuthenticationUtil;
 import org.apache.hadoop.hbase.security.token.AuthenticationTokenSelector;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
 import org.apache.hadoop.hbase.util.ExceptionUtil;
@@ -518,12 +519,12 @@ public class RpcClient {
       this.codec = codec;
       this.compressor = compressor;
 
-      this.tokenAuthEnabled=("tokenauth".equalsIgnoreCase(conf.get("hbase.security.authentication")))?true:false;
+      this.tokenAuthEnabled=AuthenticationUtil.isTokenAuthEnabled(conf);
       SecurityInfo securityInfo;
       
       UserGroupInformation ticket = remoteId.getTicket().getUGI();
       if(tokenAuthEnabled){
-        securityInfo=TokenAuthenticationInfo.getInfo(remoteId.getServiceName());
+        securityInfo=SecurityTokenAuthInfo.getInfo(remoteId.getServiceName());
       }
       else{
         securityInfo=SecurityInfo.getInfo(remoteId.getServiceName());
@@ -558,7 +559,7 @@ public class RpcClient {
         authMethod = AuthMethod.SIMPLE;
       } else if (token != null) {
         authMethod = AuthMethod.DIGEST;
-      } else if("tokenauth".equalsIgnoreCase(conf.get("hbase.security.authentication"))){
+      } else if(AuthenticationUtil.isTokenAuthEnabled(conf)){
         authMethod=AuthMethod.TOKENAUTH;
       }else{
         authMethod = AuthMethod.KERBEROS;

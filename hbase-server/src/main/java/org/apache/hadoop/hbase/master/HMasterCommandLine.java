@@ -45,6 +45,7 @@ import org.apache.hadoop.hbase.zookeeper.MiniZooKeeperCluster;
 import org.apache.hadoop.hbase.zookeeper.ZKUtil;
 import org.apache.hadoop.metrics2.lib.DefaultMetricsSystem;
 import org.apache.zookeeper.KeeperException;
+import org.apache.hadoop.hbase.security.AuthenticationUtil;
 
 @InterfaceAudience.Private
 public class HMasterCommandLine extends ServerCommandLine {
@@ -164,8 +165,8 @@ public class HMasterCommandLine extends ServerCommandLine {
         zooKeeperCluster.setDefaultClientPort(zkClientPort);
 
         // login the zookeeper server principal (if using security)
-        if("tokenauth".equalsIgnoreCase(conf.get("hbase.security.authentication"))){
-          ZKUtil.loginServer(conf, "hbase.zookeeper.server.keystore.file",
+        if(AuthenticationUtil.isTokenAuthEnabled(conf)){
+          ZKUtil.loginServer(conf, "hbase.zookeeper.server.authn.file",
             "hbase.zookeeper.server.tokenauth.principal", null);
         }
         else{

@@ -69,10 +69,16 @@ public class HQuorumPeer {
       zkConfig.parseProperties(zkProperties);
 
       // login the zookeeper server principal (if using security)
-      ZKUtil.loginServer(conf, "hbase.zookeeper.server.keytab.file",
-        "hbase.zookeeper.server.kerberos.principal",
-        zkConfig.getClientPortAddress().getHostName());
-
+      if("tokenauth".equalsIgnoreCase(conf.get("hbase.security.authentication"))){
+        ZKUtil.loginServer(conf, "hbase.zookeeper.server.authentication.file",
+          "hbase.zookeeper.server.tokenauth.principal",
+          zkConfig.getClientPortAddress().getHostName());
+      }
+      else{
+        ZKUtil.loginServer(conf, "hbase.zookeeper.server.keytab.file",
+          "hbase.zookeeper.server.kerberos.principal",
+          zkConfig.getClientPortAddress().getHostName());
+      }
       runZKServer(zkConfig);
     } catch (Exception e) {
       e.printStackTrace();

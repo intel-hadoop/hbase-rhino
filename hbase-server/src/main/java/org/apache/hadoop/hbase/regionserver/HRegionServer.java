@@ -50,6 +50,7 @@ import javax.management.ObjectName;
 import javax.servlet.http.HttpServlet;
 
 import org.apache.commons.lang.math.RandomUtils;
+
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
@@ -115,6 +116,7 @@ import org.apache.hadoop.hbase.regionserver.wal.HLogFactory;
 import org.apache.hadoop.hbase.regionserver.wal.HLogSplitter;
 import org.apache.hadoop.hbase.regionserver.wal.HLogUtil;
 import org.apache.hadoop.hbase.regionserver.wal.WALActionsListener;
+import org.apache.hadoop.hbase.security.AuthenticationUtil;
 import org.apache.hadoop.hbase.security.UserProvider;
 import org.apache.hadoop.hbase.trace.SpanReceiverHost;
 import org.apache.hadoop.hbase.util.Bytes;
@@ -449,7 +451,7 @@ public class HRegionServer extends HasThread implements
     rpcServices = createRpcServices();
     this.startcode = System.currentTimeMillis();
     
-    if("tokenauth".equalsIgnoreCase(conf.get("hbase.security.authentication"))){
+    if(AuthenticationUtil.isTokenAuthEnabled(conf)){
       this.ZK_AUTH_KEYSTORE_KEY="hbase.zookeeper.client.authn.file";
       this.ZK_AUTH_PRINCIPAL_KEY="hbase.zookeeper.client.tokenauth.principal";
       this.RS_AUTH_KEYSTORE_KEY="hbase.regionserver.authn.file";
