@@ -464,7 +464,7 @@ public class HRegionServer extends HasThread implements
     }
     else{
       this.ZK_AUTH_KEYSTORE_KEY="hbase.zookeeper.client.keytab.file";
-      "hbase.zookeeper.client.kerberos.principal", this.isa.getHostName());
+      this.ZK_AUTH_PRINCIPAL_KEY="hbase.zookeeper.client.kerberos.principal";
       this.RS_AUTH_KEYSTORE_KEY="hbase.regionserver.keytab.file";
       this.RS_AUTH_PRINCIPAL_KEY="hbase.regionserver.kerberos.principal";
     }
