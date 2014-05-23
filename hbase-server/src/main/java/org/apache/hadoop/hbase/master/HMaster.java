@@ -233,12 +233,12 @@ public class HMaster extends HRegionServer implements MasterServices, Server {
   /** jetty server for master to redirect requests to regionserver infoServer */
   private org.mortbay.jetty.Server masterJettyServer;
 
+  private static String HM_AUTH_KEYFILE_KEY;
+  private static String HM_AUTH_PRINCIPAL_KEY;
+
   public static class RedirectServlet extends HttpServlet {
     private static final long serialVersionUID = 2894774810058302472L;
     private static int regionServerInfoPort;
-  
-  private static final String HBASE_SECURITY_CONF_KEY =
-      "hbase.security.authentication";
 
     @Override
     public void doGet(HttpServletRequest request,
@@ -271,6 +271,15 @@ public class HMaster extends HRegionServer implements MasterServices, Server {
     super(conf, csm);
     this.rsFatals = new MemoryBoundedLogMessageBuffer(
       conf.getLong("hbase.master.buffer.for.rs.fatals", 1*1024*1024));
+    
+    if(AuthenticationUtil.isTokenAuthEnabled(conf)){
+      HM_AUTH_PRINCIPAL_KEY="hbase.master.tokenauth.principal";
+      HM_AUTH_KEYFILE_KEY="hbase.master.authn.file";
+    }
+    else{
+      HM_AUTH_PRINCIPAL_KEY="hbase.master.kerberos.principal";
+      HM_AUTH_KEYFILE_KEY="hbase.master.keytab.file";
+    }
 
     LOG.info("hbase.rootdir=" + FSUtils.getRootDir(this.conf) +
         ", hbase.cluster.distributed=" + this.conf.getBoolean("hbase.cluster.distributed", false));
@@ -344,8 +353,7 @@ public class HMaster extends HRegionServer implements MasterServices, Server {
     try {
       super.login(user, host);
     } catch (IOException ie) {
-      user.login("hbase.master.keytab.file",
-        "hbase.master.kerberos.principal", host);
+      user.login(HM_AUTH_KEYFILE_KEY, HM_AUTH_PRINCIPAL_KEY, host);
     }
   }
 
